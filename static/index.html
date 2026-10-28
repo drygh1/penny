@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Penny</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Penny</div>
+    <nav id="nav">
+      <a href="#dashboard">Dashboard</a>
+      <a href="#subscriptions">Subscriptions</a>
+      <a href="#transactions">Transactions</a>
+      <a href="#merchants">Merchants</a>
+      <a href="#accounts">Net worth</a>
+      <a href="#settings">Settings</a>
+    </nav>
+    <div class="sync">
+      <span id="last-sync" class="muted"></span>
+      <button id="sync-btn" class="btn small" hidden>Sync</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Shown when no data exists yet -->
+    <section id="view-welcome" class="view" hidden>
+      <div class="card welcome">
+        <h1>Welcome to Penny</h1>
+        <p>Track your subscriptions, spending and net worth. Your data stays on this computer.</p>
+        <div class="row">
+          <a class="btn" href="#settings">Connect your bank</a>
+          <button class="btn secondary" data-action="demo">Try with demo data</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-dashboard" class="view" hidden>
+      <div class="tiles">
+        <div class="tile"><div class="label">Net worth</div><div class="value" id="t-networth"></div></div>
+        <div class="tile"><div class="label">Spent this month</div><div class="value" id="t-spent"></div><div class="sub" id="t-spent-sub"></div></div>
+        <div class="tile"><div class="label">Subscriptions &amp; bills</div><div class="value" id="t-subs"></div><div class="sub">per month</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Monthly spending</h2><span class="muted">Excludes transfers between your accounts</span></div>
+        <div class="chart-box"><canvas id="chart-monthly" aria-label="Monthly spending bar chart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Where it went</h2>
+          <select id="breakdown-month" aria-label="Month"></select>
+        </div>
+        <div class="breakdown">
+          <div class="donut-box">
+            <canvas id="chart-donut" aria-label="Spending by category donut chart"></canvas>
+            <div class="donut-center" aria-hidden="true">
+              <div class="donut-total" id="donut-total"></div>
+              <div class="muted" id="donut-month"></div>
+            </div>
+          </div>
+          <div id="category-bars" class="bars"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>Top merchants</h2></div>
+          <div id="merchant-list" class="list"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Coming up</h2><span class="muted">Next 30 days</span></div>
+          <div id="upcoming" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-subscriptions" class="view" hidden>
+      <div class="tiles">
+        <div class="tile"><div class="label">Monthly</div><div class="value" id="s-monthly"></div></div>
+        <div class="tile"><div class="label">Yearly</div><div class="value" id="s-yearly"></div></div>
+        <div class="tile"><div class="label">Active</div><div class="value" id="s-count"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Active subscriptions &amp; bills</h2></div>
+        <div id="subs-active" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Stopped charging</h2><span class="muted">No charge when one was expected. Probably cancelled.</span></div>
+        <div id="subs-inactive" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Hidden</h2><span class="muted">Things you marked as not a subscription</span></div>
+        <div id="subs-ignored" class="list"></div>
+      </div>
+    </section>
+
+    <section id="view-transactions" class="view" hidden>
+      <div class="card">
+        <div class="filters">
+          <input id="tx-search" type="search" placeholder="Search">
+          <select id="tx-month" aria-label="Month"><option value="">All months</option></select>
+          <select id="tx-category" aria-label="Category"><option value="">All categories</option></select>
+        </div>
+        <p class="muted hint">Changing a category applies to every transaction from that merchant.</p>
+        <div class="table-wrap">
+          <table class="tx">
+            <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-merchants" class="view" hidden>
+      <div class="card">
+        <div class="card-head">
+          <h2>Merchants</h2>
+          <span class="muted">Rules apply to past and future transactions from that merchant.</span>
+        </div>
+        <div class="filters">
+          <input id="m-search" type="search" placeholder="Search merchants">
+          <select id="m-filter" aria-label="Show">
+            <option value="">All merchants</option>
+            <option value="rules">With a rule</option>
+            <option value="logos">With a picture</option>
+          </select>
+        </div>
+        <div id="merchant-rows" class="list merchants"></div>
+        <input id="logo-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic" hidden>
+      </div>
+    </section>
+
+    <section id="view-accounts" class="view" hidden>
+      <div class="tiles">
+        <div class="tile"><div class="label">Net worth</div><div class="value" id="a-networth"></div></div>
+        <div class="tile"><div class="label">Assets</div><div class="value" id="a-assets"></div></div>
+        <div class="tile"><div class="label">Debts</div><div class="value" id="a-debts"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Net worth over time</h2></div>
+        <div class="chart-box"><canvas id="chart-networth" aria-label="Net worth line chart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Accounts</h2></div>
+        <div id="account-list" class="list"></div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view" hidden>
+      <div class="card">
+        <h2>Connect your bank with SimpleFIN</h2>
+        <ol class="steps">
+          <li>Create an account at <a href="https://bridge.simplefin.org" target="_blank" rel="noopener">bridge.simplefin.org</a> (about $15/year) and link your banks there.</li>
+          <li>In SimpleFIN, choose <b>New Connection</b> to create a <b>Setup Token</b>, and copy it.</li>
+          <li>Paste it below. It works only once. Penny trades it for a private access key, which is stored only on this computer.</li>
+        </ol>
+        <form id="connect-form" class="row">
+          <input id="setup-token" placeholder="Paste setup token" autocomplete="off" required>
+          <button class="btn" type="submit">Connect</button>
+        </form>
+        <p id="connect-msg" class="msg"></p>
+      </div>
+      <div class="card" id="import-card">
+        <div class="card-head"><h2>Import older transactions</h2></div>
+        <p class="muted">
+          SimpleFIN only reaches back about 90 days. For older history, go to your bank's website, find
+          <b>Download</b> or <b>Export</b> on the transactions page, choose <b>CSV</b>, and pick the longest date range.
+          For Bank of America credit cards you can also select PDF statements and year-end summaries, several at once.
+          Connect SimpleFIN first, then import into the matching account. Transactions Penny already has are skipped.
+        </p>
+        <div class="import-grid">
+          <label>Account
+            <select id="imp-account"></select>
+          </label>
+          <label>CSV file, or PDF statements
+            <input id="imp-file" type="file" accept=".csv,.txt,text/csv,.pdf,application/pdf" multiple>
+          </label>
+        </div>
+        <div id="imp-new-account" class="import-grid" hidden>
+          <label>Account name <input id="imp-new-name" placeholder="e.g. Old Checking" maxlength="60"></label>
+          <label>Bank (optional) <input id="imp-new-org" maxlength="60"></label>
+          <label>Balance today <input id="imp-new-balance" type="number" step="0.01" value="0"></label>
+        </div>
+
+        <div id="imp-mapping" hidden>
+          <div id="imp-statements" class="statements"></div>
+          <h3 id="imp-columns-title">Check the columns</h3>
+          <div class="map-grid">
+            <label>Date <select data-map="date"></select></label>
+            <label>Description <select data-map="description"></select></label>
+            <label>Amount <select data-map="amount"></select></label>
+            <label data-split>Money out (debit) <select data-map="debit"></select></label>
+            <label data-split>Money in (credit) <select data-map="credit"></select></label>
+          </div>
+          <label class="check"><input id="imp-flip" type="checkbox"> Purchases show as positive numbers in this file (common for credit cards)</label>
+          <p id="imp-summary" class="msg"></p>
+          <div class="table-wrap">
+            <table class="tx">
+              <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th class="num">Amount</th></tr></thead>
+              <tbody id="imp-preview"></tbody>
+            </table>
+          </div>
+          <p id="imp-sign-hint" class="muted hint">Spending should be negative and money coming in positive. If it's backwards, tick the box above.</p>
+          <button id="imp-go" class="btn">Import</button>
+        </div>
+        <p id="imp-msg" class="msg"></p>
+        <div id="imp-history" class="list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Categories</h2>
+          <span class="muted">Income, Transfers and Other are built in.</span>
+        </div>
+        <form id="add-category-form" class="row">
+          <input id="new-category" placeholder="New category name" maxlength="40" required>
+          <button class="btn" type="submit">Add category</button>
+        </form>
+        <p id="category-msg" class="msg"></p>
+        <div id="category-rows" class="cat-list"></div>
+      </div>
+      <div class="card">
+        <h2>Data</h2>
+        <div class="row">
+          <button class="btn secondary" data-action="sync">Sync now</button>
+          <button class="btn secondary" data-action="demo">Load demo data</button>
+          <button class="btn danger" data-action="disconnect">Disconnect &amp; delete all data</button>
+        </div>
+        <p id="data-msg" class="msg"></p>
+      </div>
+      <div class="card">
+        <h2>Stop Penny</h2>
+        <p class="muted">Penny keeps running in the background after you close this tab, so it opens instantly next time. Stop it here if you like. Opening the Penny app starts it again.</p>
+        <button class="btn secondary" id="stop-btn">Stop Penny</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="delete-category-dialog">
+    <form id="delete-category-form" method="dialog">
+      <h2 id="delete-category-title"></h2>
+      <p id="delete-category-text"></p>
+      <select id="delete-category-move" aria-label="Move to category"></select>
+      <div class="row dialog-actions">
+        <button class="btn secondary" value="cancel">Cancel</button>
+        <button class="btn danger" value="delete">Delete category</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/static/app.js"></script>
+</body>
+</html>
