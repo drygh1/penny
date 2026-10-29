@@ -88,8 +88,8 @@ Transactions are dated the day you made the purchase, not the day the bank poste
 Add or delete categories under **Settings → Categories**.
 
 - When you delete a category, you choose where its transactions go. Merchant rules pointing to it move too. Future transactions that would have landed in it go to the new category.
-- Income, Transfers and Other are built in and can't be deleted. Spending totals leave out Income and Transfers, and Other catches anything unmatched.
-- Up to 8 categories get distinct colors. Deleting one frees its color for the next category you add. Categories beyond 8 show in gray.
+- Income, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Transfers and Investments (money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved). Other catches anything unmatched.
+- Every category gets its own color, from 20 colors ordered so neighbors stay distinct for colorblind readers too. Deleting a category frees its color for the next one you add; only past 20 categories does one show in gray.
 - A new category starts empty. Use the **Merchants** page to assign merchants to it.
 
 ## Toward an iPhone app

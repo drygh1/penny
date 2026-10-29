@@ -25,8 +25,8 @@ const rangeLabel = (first, last) => {
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const thisMonth = () => isoDay(new Date()).slice(0, 7);
 
-// Each category keeps the same color everywhere. The server gives up to eight
-// categories a colorblind-checked color slot; the rest share a neutral gray.
+// Each category keeps the same color everywhere. The server gives each of up to 20
+// categories its own colorblind-checked color slot; any beyond that share a neutral gray.
 // Slot order is also the donut's slice order, which keeps neighbors distinct.
 const OTHER_LABEL = "Everything else";
 const categoryNames = () => categories.map((c) => c.name);
@@ -306,7 +306,7 @@ function renderBreakdown(b) {
 }
 
 // Donut slices go in the fixed palette order, so each color always sits
-// next to the same neighbors. Small categories merge into one gray slice.
+// next to the same neighbors. Only categories without a color merge into one gray slice.
 function drawDonut(b) {
   const byCat = Object.fromEntries(b.categories.map((c) => [c.category, c.total]));
   const colored = categories.filter((c) => c.color_slot && byCat[c.name])

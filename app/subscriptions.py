@@ -8,6 +8,8 @@ from dataclasses import dataclass, asdict
 from datetime import date, timedelta
 from statistics import median
 
+from .categorize import NON_SPENDING
+
 DAY = 86400
 
 # name, nominal period in days, accepted interval range
@@ -79,7 +81,7 @@ def detect(transactions, today: date, names=None, overrides=None) -> list[Recurr
     overrides = overrides or {}
     by_merchant: dict[str, list] = {}
     for t in transactions:
-        if t["amount"] >= 0 or t["category"] in ("Transfers", "Income"):
+        if t["amount"] >= 0 or t["category"] in NON_SPENDING:
             continue
         by_merchant.setdefault(t["merchant"], []).append(t)
 

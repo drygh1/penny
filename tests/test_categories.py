@@ -17,13 +17,34 @@ def cats(client):
     return {c["name"]: c for c in client.get("/api/categories").json()}
 
 
+def test_every_category_has_its_own_color(client):
+    slots = [c["color_slot"] for c in cats(client).values()]
+    assert None not in slots and len(set(slots)) == len(slots)
+
+
 def test_add_category_takes_free_color_after_delete(client):
     assert client.post("/api/categories", json={"name": "Kids"}).status_code == 200
-    assert cats(client)["Kids"]["color_slot"] is None  # all 8 colors in use
+    assert cats(client)["Kids"]["color_slot"] == 17  # the 16 starting categories use 1-16
+    for name in ("Pets", "Gifts", "Hobbies"):  # slots 18-20
+        client.post("/api/categories", json={"name": name})
+    client.post("/api/categories", json={"name": "Garden"})
+    assert cats(client)["Garden"]["color_slot"] is None  # all 20 colors in use
 
+    # Deleting a category hands its color to the one left gray.
     client.delete("/api/categories", params={"name": "Entertainment", "move_to": "Other"})
-    client.post("/api/categories", json={"name": "  Pets  "})
-    assert cats(client)["Pets"]["color_slot"] == 8  # Entertainment's freed color
+    assert cats(client)["Garden"]["color_slot"] == 8
+
+
+def test_gray_categories_from_before_get_colors(tmp_path, monkeypatch):
+    from app import db
+    monkeypatch.setattr(db, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "penny.db")
+    conn = db.connect()
+    with conn:  # what an older Penny left behind: some categories without a color
+        conn.execute("UPDATE categories SET color_slot = NULL WHERE name IN ('Health', 'Travel')")
+    conn.close()
+    slots = dict(db.connect().execute("SELECT name, color_slot FROM categories").fetchall())
+    assert None not in slots.values() and len(set(slots.values())) == len(slots)
 
 
 def test_rejects_duplicates_and_locked(client):
@@ -58,3 +79,30 @@ def test_other_websites_cannot_change_data(client):
     assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 403
     # Penny's own page is allowed.
     assert client.post("/api/demo", headers={"Origin": "http://127.0.0.1:8000"}).status_code == 200
+
+
+def test_atm_withdrawals_are_cash_but_atm_fees_are_fees():
+    from app.categorize import categorize
+    assert categorize("Withdrawal ATM #000000000111 WESTFIELD FEDERAL CU 100 MAIN ST SPRINGFIELD IL", -100) == "Cash"
+    assert categorize("Withdrawal ATM #000000000385 MAPLETON CAFE -000123 SPRINGFIELD IL", -60) == "Cash"  # not Dining
+    assert categorize("WITHDRAWAL AT ATM #000000000532ATMBANCO 2 FAIRVIEW CENTRO", -80.00) == "Cash"
+    assert categorize("Withdrawal Fee ATM Fee Int'l Transaction Fee Assessed by Visa", -1.19) == "Fees"
+    assert categorize("WITHDRAWAL ATM FeeInt'l Transaction Fee Assessed by Visa", -1.19) == "Fees"
+
+
+def test_cash_is_added_once_to_older_databases(tmp_path, monkeypatch):
+    from app import db
+    monkeypatch.setattr(db, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "penny.db")
+    conn = db.connect()
+    with conn:  # an older Penny: seeded before Cash existed
+        conn.execute("DELETE FROM categories WHERE name = 'Cash'")
+        db.set_setting(conn, "category_added:Cash", None)
+    conn.close()
+    names = db.category_names(db.connect())
+    assert names.index("Cash") == names.index("Fees") - 1
+
+    conn = db.connect()
+    with conn:  # deleting it later sticks
+        conn.execute("DELETE FROM categories WHERE name = 'Cash'")
+    assert "Cash" not in db.category_names(db.connect())

@@ -12,6 +12,7 @@ import re
 DEFAULT_CATEGORIES = [
     "Income",
     "Transfers",
+    "Investments",
     "Housing",
     "Utilities & Bills",
     "Subscriptions",
@@ -22,23 +23,32 @@ DEFAULT_CATEGORIES = [
     "Health",
     "Entertainment",
     "Travel",
+    "Cash",
     "Fees",
     "Other",
 ]
+# Defaults added after the first release, for databases seeded before them:
+# name -> the category it goes just before.
+LATER_DEFAULT_CATEGORIES = {"Cash": "Fees", "Investments": "Housing"}
 
-# Categories that aren't real spending (moving money between your own accounts).
-NON_SPENDING = {"Transfers", "Income"}
+# Categories that aren't spending: money coming in, money moving between your
+# own accounts, and money put into investments (it's still yours, so it counts
+# toward what you saved).
+NON_SPENDING = {"Transfers", "Income", "Investments"}
 
 # Spending math depends on Income and Transfers, and Other is the fallback,
 # so these three can't be deleted.
 LOCKED_CATEGORIES = {"Income", "Transfers", "Other"}
 
-# Categories get one of 8 colorblind-checked color slots (see style.css).
-# The rest show in gray. New categories take the first free slot.
-COLOR_SLOTS = 8
+# Each category gets its own color slot (see style.css): 20 colors, ordered so
+# neighbors stay distinct with colorblindness too. New categories take the
+# first free slot; only past 20 categories does one show in gray.
+COLOR_SLOTS = 20
 DEFAULT_COLOR_SLOTS = {
     "Housing": 1, "Dining": 2, "Groceries": 3, "Transportation": 4, "Shopping": 5,
     "Utilities & Bills": 6, "Subscriptions": 7, "Entertainment": 8,
+    "Income": 9, "Transfers": 10, "Health": 11, "Travel": 12, "Fees": 13, "Other": 14, "Cash": 15,
+    "Investments": 16,
 }
 
 # Checked in order against the lowercased raw description; first match wins.
@@ -47,8 +57,15 @@ KEYWORDS = [
                    "credit card pmt", "epay", "to savings", "from savings", "venmo cashout",
                    "contribution", "electronic payment", "mobile payment", "payment - thank",
                    "to share", "from share",  # credit unions call accounts "shares"
-                   "online pmt", "e-payment"]),
+                   "online pmt", "e-payment",
+                   "acctverify"]),  # the cents a brokerage sends to verify an account
+    # Before Income, so money coming back out of a brokerage isn't counted as earned.
+    ("Investments", ["fid bkg", "fidelity", "moneyline", "robinhood", "coinbase", "vanguard", "schwab",
+                     "brokerage", "betterment", "wealthfront", "acorns", "e*trade", "etrade"]),
     ("Income", ["payroll", "direct dep", "autodep", "salary", "interest paid", "dividend", "tax refund"]),
+    # Before the store keywords, so an ATM inside a cafe is still cash. "ATM Fee"
+    # lines have no "#", so they stay in Fees.
+    ("Cash", ["atm #", "atm withdrawal", "cash withdrawal"]),
     ("Housing", ["rent", "mortgage", "hoa ", "property mgmt", "apartments"]),
     ("Utilities & Bills", ["electric", "energy", "water", "gas co", "utility", "comcast", "xfinity",
                            "verizon", "at&t", "t-mobile", "tmobile", "internet", "insurance",

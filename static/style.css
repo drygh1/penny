@@ -18,6 +18,9 @@
   /* Category colors (colorblind-checked order; see CATEGORY_SLOTS in app.js) */
   --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
   --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948;
+  --series-9: #5aa8e8; --series-10: #8c8a00; --series-11: #0f8fa8; --series-12: #b8862b;
+  --series-13: #c35bd0; --series-14: #4d7a2a; --series-15: #3d55b8; --series-16: #9e3d55;
+  --series-17: #6f38b8; --series-18: #b5472a; --series-19: #a33d8f; --series-20: #6f8f1f;
   --series-other: #a3a29b;
   --income: var(--series-3);
   --spending: var(--series-1);
@@ -42,6 +45,9 @@
     --warning-ink: #fab219;
     --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
     --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+    --series-9: #4a9ae0; --series-10: #9a9800; --series-11: #1a9fb8; --series-12: #b8862b;
+    --series-13: #b866c4; --series-14: #5f8f36; --series-15: #6a7fe0; --series-16: #c25a72;
+    --series-17: #8a58d0; --series-18: #c9583a; --series-19: #c05aac; --series-20: #7f9f2f;
     --series-other: #6b6a65;
   }
 }
@@ -62,6 +68,9 @@
   --warning-ink: #fab219;
   --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
   --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+  --series-9: #4a9ae0; --series-10: #9a9800; --series-11: #1a9fb8; --series-12: #b8862b;
+  --series-13: #b866c4; --series-14: #5f8f36; --series-15: #6a7fe0; --series-16: #c25a72;
+  --series-17: #8a58d0; --series-18: #c9583a; --series-19: #c05aac; --series-20: #7f9f2f;
   --series-other: #6b6a65;
 }
 
@@ -152,7 +161,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; grid-tem
 .tx td.cat .dot { vertical-align: middle; }
 
 /* Lists */
-.list { display: grid; }
+/* minmax(0, ...) lets rows shrink to the card, so a long one-line bank
+   description is cut off with "…" instead of pushing controls past the edge. */
+.list { display: grid; grid-template-columns: minmax(0, 1fr); }
 .item {
   display: flex; align-items: center; gap: 12px;
   padding: 12px 0; border-top: 1px solid var(--border);

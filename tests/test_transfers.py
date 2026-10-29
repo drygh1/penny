@@ -73,3 +73,14 @@ def test_yearly_totals_match_each_year(client):
     years = client.get("/api/spending/yearly").json()
     assert years == [{"year": "2024", "spending": 40.0, "income": 1000.0},
                      {"year": "2025", "spending": 60.0, "income": 1200.0}]
+
+
+def test_investing_is_neither_spending_nor_income(client):
+    new_account(client, "Savings", [(this_month, "Withdrawal ACH VANGUARD BUY INVESTMENT CO: VANGUARD", -6000.00),
+                                    (this_month, "Withdrawal ACH BETTERMENT TYPE: DEPOSIT CO: BETTERMENT", -100.00),
+                                    (this_month, "Deposit ACH WEALTHFRONT TYPE: CREDITS CO: WEALTHFRONT", 100.00),
+                                    (this_month, "PINECREST GROCERY", -40.00)])
+    cats = categories_by_desc(client)
+    assert {cats[d] for d in cats if "GROCERY" not in d} == {"Investments"}
+    month = client.get("/api/spending/monthly").json()[-1]
+    assert month["spending"] == 40.00 and month["income"] == 0

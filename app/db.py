@@ -6,7 +6,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .categorize import DEFAULT_CATEGORIES, DEFAULT_COLOR_SLOTS, description_key
+from .categorize import COLOR_SLOTS, DEFAULT_CATEGORIES, DEFAULT_COLOR_SLOTS, LATER_DEFAULT_CATEGORIES, description_key
 
 DATA_DIR = Path(os.environ.get("PENNY_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "penny.db"
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS subscription_overrides (
     status   TEXT NOT NULL
 );
 
--- The user's categories. color_slot is 1-8 (a palette color) or NULL (gray).
+-- The user's categories. color_slot is 1-20 (a palette color) or NULL (gray, past 20).
 CREATE TABLE IF NOT EXISTS categories (
     name       TEXT PRIMARY KEY,
     position   INTEGER NOT NULL,
@@ -128,6 +128,28 @@ def connect() -> sqlite3.Connection:
                 "INSERT OR IGNORE INTO categories (name, position, color_slot) VALUES (?, ?, ?)",
                 [(c, i, DEFAULT_COLOR_SLOTS.get(c)) for i, c in enumerate(DEFAULT_CATEGORIES)])
             set_setting(conn, "categories_seeded", 1)
+            for name in LATER_DEFAULT_CATEGORIES:
+                set_setting(conn, f"category_added:{name}", 1)
+    # Defaults added later go in once, in their usual spot. If you delete one, it stays deleted.
+    for name, before in LATER_DEFAULT_CATEGORIES.items():
+        if get_setting(conn, f"category_added:{name}"):
+            continue
+        with conn:
+            if not conn.execute("SELECT 1 FROM categories WHERE lower(name) = lower(?)", (name,)).fetchone():
+                at = conn.execute("SELECT COALESCE((SELECT position FROM categories WHERE name = ?), "
+                                  "(SELECT MAX(position) + 1 FROM categories), 0)", (before,)).fetchone()[0]
+                conn.execute("UPDATE categories SET position = position + 1 WHERE position >= ?", (at,))
+                conn.execute("INSERT INTO categories (name, position) VALUES (?, ?)", (name, at))
+                conn.execute("DELETE FROM category_aliases WHERE old_name = ?", (name,))
+            set_setting(conn, f"category_added:{name}", 1)
+    # Categories from before there were enough colors may still be gray.
+    gray = conn.execute("SELECT name FROM categories WHERE color_slot IS NULL ORDER BY position").fetchall()
+    if gray:
+        used = {r[0] for r in conn.execute("SELECT color_slot FROM categories WHERE color_slot IS NOT NULL")}
+        free = [s for s in range(1, COLOR_SLOTS + 1) if s not in used]
+        with conn:
+            conn.executemany("UPDATE categories SET color_slot = ? WHERE name = ?",
+                             [(slot, r["name"]) for slot, r in zip(free, gray)])
     return conn
 
 
