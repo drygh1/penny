@@ -73,7 +73,7 @@ TX_SELECT = """
            o.category IS NOT NULL AS edited,
            d.pattern AS description_rule,
            strftime('%Y-%m', t.posted, 'unixepoch', 'localtime') AS month,
-           a.name AS account_name
+           COALESCE(a.nickname, a.name) AS account_name
     FROM transactions t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN transaction_categories o ON o.tx_id = t.id
@@ -236,8 +236,10 @@ def reveal_backups():
 @app.get("/api/accounts")
 def accounts(conn=Depends(get_conn)):
     rows = [dict(r) for r in conn.execute(
-        "SELECT id, org_name, name, currency, balance, available_balance, balance_date "
-        "FROM accounts WHERE hidden = 0 ORDER BY org_name, name")]
+        "SELECT id, org_name, COALESCE(nickname, name) AS name, name AS bank_name, nickname, "
+        "currency, balance, available_balance, balance_date "
+        # Biggest balance first, debts after, empty accounts last.
+        "FROM accounts WHERE hidden = 0 ORDER BY balance = 0, balance DESC, COALESCE(nickname, name)")]
     assets = sum(r["balance"] for r in rows if r["balance"] > 0)
     debts = sum(r["balance"] for r in rows if r["balance"] < 0)
 
@@ -280,6 +282,24 @@ def _walk_back(account_id, day0: date, balance: float, txs, until: date, anchor:
         out.append({"account_id": account_id, "day": d.isoformat(), "balance": round(shown, 2)})
         d -= timedelta(days=7)
     return out
+
+
+class AccountNameBody(BaseModel):
+    id: str
+    name: str  # blank goes back to the bank's name
+
+
+@app.put("/api/accounts/name")
+def rename_account(body: AccountNameBody, conn=Depends(get_conn)):
+    """Give an account your own name. Syncs keep it; they only update the bank's name."""
+    name = " ".join(body.name.split())
+    if len(name) > 60:
+        fail(Exception("Keep account names to 60 characters or fewer."))
+    with conn:
+        cur = conn.execute("UPDATE accounts SET nickname = ? WHERE id = ?", (name or None, body.id))
+    if not cur.rowcount:
+        fail(Exception("That account no longer exists."))
+    return {"ok": True}
 
 
 def earlier_balances(conn, snaps) -> list[dict]:
@@ -908,12 +928,12 @@ def import_pdf(body: PdfImportBody, conn=Depends(get_conn)):
 def import_summary(conn=Depends(get_conn)):
     """Imported history per account, for the undo list."""
     rows = conn.execute("""
-        SELECT a.id, a.name, a.org_name, COUNT(*) AS count,
+        SELECT a.id, COALESCE(a.nickname, a.name) AS name, a.org_name, COUNT(*) AS count,
                date(MIN(t.posted), 'unixepoch', 'localtime') AS first_date,
                date(MAX(t.posted), 'unixepoch', 'localtime') AS last_date
         FROM transactions t JOIN accounts a ON a.id = t.account_id
         WHERE t.id LIKE a.id || ':csv:%'
-        GROUP BY a.id ORDER BY a.name""").fetchall()
+        GROUP BY a.id ORDER BY 2""").fetchall()
     return [dict(r) | {"manual": r["id"].startswith("manual-")} for r in rows]
 
 

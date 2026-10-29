@@ -15,7 +15,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
     id                TEXT PRIMARY KEY,
     org_name          TEXT,
-    name              TEXT NOT NULL,
+    name              TEXT NOT NULL,            -- the bank's name; syncs overwrite it
+    nickname          TEXT,                     -- your name for it, shown instead
     currency          TEXT NOT NULL DEFAULT 'USD',
     balance           REAL NOT NULL DEFAULT 0,
     available_balance REAL,
@@ -132,6 +133,8 @@ def connect() -> sqlite3.Connection:
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
     if "affects_balance" not in columns:
         conn.execute("ALTER TABLE transactions ADD COLUMN affects_balance INTEGER NOT NULL DEFAULT 1")
+    if "nickname" not in {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}:
+        conn.execute("ALTER TABLE accounts ADD COLUMN nickname TEXT")
     # The DB holds your SimpleFIN access URL, so keep it readable only by you.
     os.chmod(DB_PATH, 0o600)
     if not get_setting(conn, "categories_seeded"):

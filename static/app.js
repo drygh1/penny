@@ -750,13 +750,49 @@ async function loadAccounts() {
     options: o,
   });
 
-  $("#account-list").innerHTML = a.accounts.length
-    ? a.accounts.map((acc) => itemHTML({
-        title: acc.name, meta: acc.org_name || "", amount: money(acc.balance),
+  const accountRow = (acc) => `<div data-account-row="${esc(acc.id)}">${itemHTML({
+        title: acc.name,
+        meta: [acc.org_name, acc.nickname ? `Bank calls it “${acc.bank_name}”` : ""].filter(Boolean).join(" · "),
+        amount: money(acc.balance),
         amountMeta: acc.available_balance != null && acc.available_balance !== acc.balance ? `${money(acc.available_balance)} available` : "",
-      })).join("")
-    : `<div class="empty">No accounts.</div>`;
+        actions: `<button class="link-btn" data-rename-account="${esc(acc.id)}" data-name="${esc(acc.name)}" data-bank-name="${esc(acc.bank_name)}">Rename</button>`,
+      })}</div>`;
+  // Money you owe (credit cards, loans) goes under Debts; everything else, $0 included, is an asset.
+  const assets = a.accounts.filter((acc) => acc.balance >= 0);
+  const debts = a.accounts.filter((acc) => acc.balance < 0);
+  $("#assets-total").textContent = money(a.assets);
+  $("#debts-total").textContent = money(Math.abs(a.debts));
+  $("#account-list").innerHTML = assets.length ? assets.map(accountRow).join("") : `<div class="empty">No accounts.</div>`;
+  $("#debt-list").innerHTML = debts.length ? debts.map(accountRow).join("") : `<div class="empty">No debts.</div>`;
 }
+
+// Renaming swaps the row for a small form. Saving a blank name goes back to the bank's.
+$("#view-accounts").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-rename-account]");
+  if (!btn) return;
+  const { renameAccount: id, name, bankName } = btn.dataset;
+  const row = btn.closest("[data-account-row]");
+  row.innerHTML = `<form class="item row rename-form">
+      <input name="name" value="${esc(name)}" placeholder="${esc(bankName)}" maxlength="60" aria-label="Account name">
+      <button class="btn small">Save</button>
+      <button type="button" class="link-btn" data-rename-cancel>Cancel</button>
+      <p class="msg"></p>
+    </form>`;
+  const form = row.querySelector("form");
+  form.name.focus();
+  form.name.select();
+  form.querySelector("[data-rename-cancel]").onclick = loadAccounts;
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/accounts/name", { method: "PUT", body: { id, name: form.name.value } });
+      loadAccounts();
+    } catch (err) {
+      const msg = form.querySelector(".msg");
+      msg.className = "msg error"; msg.textContent = err.message;
+    }
+  };
+});
 
 // ---------- CSV import (in Settings) ----------
 

@@ -21,6 +21,7 @@
     <div class="sync">
       <span id="last-sync" class="muted"></span>
       <button id="sync-btn" class="btn small" hidden>Sync</button>
+      <button id="stop-btn" class="btn small danger" title="Penny keeps running in the background after you close this tab, so it opens instantly next time. This stops it. Opening the Penny app starts it again.">Stop Penny</button>
     </div>
   </header>
 
@@ -174,9 +175,15 @@
         <div class="card-head"><h2>Net worth over time</h2></div>
         <div class="chart-box"><canvas id="chart-networth" aria-label="Net worth line chart"></canvas></div>
       </div>
-      <div class="card">
-        <div class="card-head"><h2>Accounts</h2></div>
-        <div id="account-list" class="list"></div>
+      <div class="grid-2 fit">
+        <div class="card">
+          <div class="card-head"><h2>Assets</h2><span class="muted" id="assets-total"></span></div>
+          <div id="account-list" class="list"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Debts</h2><span class="muted" id="debts-total"></span></div>
+          <div id="debt-list" class="list"></div>
+        </div>
       </div>
     </section>
 
@@ -278,11 +285,6 @@
         </div>
         <p class="muted hint">Disconnecting keeps everything already downloaded. Deleting makes a backup first.</p>
         <p id="data-msg" class="msg"></p>
-      </div>
-      <div class="card">
-        <h2>Stop Penny</h2>
-        <p class="muted">Penny keeps running in the background after you close this tab, so it opens instantly next time. Stop it here if you like. Opening the Penny app starts it again.</p>
-        <button class="btn secondary" id="stop-btn">Stop Penny</button>
       </div>
     </section>
   </main>

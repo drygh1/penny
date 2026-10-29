@@ -171,3 +171,29 @@ def test_money_into_a_brokerage_without_transactions_does_not_vanish(client):
     assert set(between(193, 100)) == {11000}  # after the paycheck, before the deposit
     assert set(between(100, 0)) == {11000}    # the deposit never shows as a drop
     assert history[0]["net_worth"] == 9000    # before the paycheck
+
+
+def test_renamed_account_keeps_its_name_through_syncs(client):
+    from app import db, sync
+    text = csv_for([(date.today() - timedelta(days=3), "PINECREST GROCERY", -40)])
+    mapping = client.post("/api/import/preview", json={"csv": text}).json()["mapping"]
+    account_id = client.post("/api/import", json={"csv": text, "mapping": mapping,
+                                                  "new_account": {"name": "Main Checking (-0042)", "balance": 500}}).json()["account_id"]
+    assert client.put("/api/accounts/name", json={"id": account_id, "name": "  Everyday   checking "}).status_code == 200
+
+    names = lambda: {a["id"]: a for a in client.get("/api/accounts").json()["accounts"]}
+    acc = names()[account_id]
+    assert acc["name"] == "Everyday checking" and acc["bank_name"] == "Main Checking (-0042)"
+    assert client.get("/api/transactions").json()[0]["account_name"] == "Everyday checking"
+
+    # A sync updates the bank's name but not yours.
+    conn = db.connect()
+    with conn:
+        sync.upsert_account(conn, {"id": account_id, "name": "Latitude Checking", "currency": "USD",
+                                   "balance": "500", "balance-date": 0, "org": {"name": "Westfield Credit Union"}})
+    assert names()[account_id]["name"] == "Everyday checking"
+    assert names()[account_id]["bank_name"] == "Latitude Checking"
+
+    client.put("/api/accounts/name", json={"id": account_id, "name": ""})
+    assert names()[account_id]["name"] == "Latitude Checking"
+    assert client.put("/api/accounts/name", json={"id": "nope", "name": "X"}).status_code == 400
