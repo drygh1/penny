@@ -17,6 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -25,7 +26,7 @@ from pydantic import BaseModel
 
 from . import backup, db, demo, importer, pdf_statements, simplefin, subscriptions
 from .categorize import (COLOR_SLOTS, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
-                         normalize_merchant)
+                         institution_words, normalize_merchant)
 from .sync import (match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
                    upsert_transaction)
 
@@ -67,12 +68,15 @@ async def only_local_pages(request: Request, call_next):
 
 TX_SELECT = """
     SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.merchant, t.pending,
-           COALESCE(d.category, r.category, t.category) AS category,
+           COALESCE(o.category, d.category, r.category, t.category) AS category,
+           COALESCE(d.category, r.category, t.category) AS default_category,
+           o.category IS NOT NULL AS edited,
            d.pattern AS description_rule,
            strftime('%Y-%m', t.posted, 'unixepoch', 'localtime') AS month,
            a.name AS account_name
     FROM transactions t
     JOIN accounts a ON a.id = t.account_id
+    LEFT JOIN transaction_categories o ON o.tx_id = t.id
     LEFT JOIN merchant_rules r ON r.merchant = t.merchant
     LEFT JOIN description_rules d ON d.merchant = t.merchant AND d.pattern = (
         SELECT d2.pattern FROM description_rules d2
@@ -257,34 +261,78 @@ def accounts(conn=Depends(get_conn)):
     }
 
 
+def _walk_back(account_id, day0: date, balance: float, txs, until: date, anchor: date, floor=None) -> list[dict]:
+    """Weekly balances before day0, undoing txs ((day, amount), newest first) back to `until`.
+
+    Every account's weeks land on the same days (anchor, anchor - 7, ...). If one
+    account's week ended on a Wednesday and another's on a Thursday, money moved
+    between them on the Thursday would count in both for a day.
+    """
+    out, i = [], 0
+    steps = (day0 - anchor).days - 1
+    d = anchor + timedelta(days=7 * (steps // 7)) if steps >= 0 else anchor - timedelta(days=7)
+    while d >= until - timedelta(days=7):
+        # Undo every transaction that happened after day d.
+        while i < len(txs) and txs[i][0] > d:
+            balance -= txs[i][1]
+            i += 1
+        shown = balance if floor is None else max(floor, balance)
+        out.append({"account_id": account_id, "day": d.isoformat(), "balance": round(shown, 2)})
+        d -= timedelta(days=7)
+    return out
+
+
 def earlier_balances(conn, snaps) -> list[dict]:
     """Weekly balances from before each account's first recorded balance.
 
     Balances are only recorded when Penny syncs, but transactions can go back
     much further (imported CSV history). Walking those transactions backward
     from the first recorded balance rebuilds what the balance must have been.
+
+    Brokerages and crypto wallets often report a balance but no transactions.
+    Those are walked back with the deposits and withdrawals seen from your
+    other accounts ("FID BKG SVC" in savings is money into Fidelity), with all
+    of one institution's accounts as one pool, so moving money in doesn't look
+    like it disappeared. Market gains and losses can't be seen, so this part
+    is an estimate; it never goes below zero.
     """
     first: dict[str, dict] = {}
     for s in snaps:
         first.setdefault(s["account_id"], s)
-    out = []
+    if not first:
+        return []
+    history = {account_id: [(date.fromtimestamp(r["posted"]), r["amount"], r["description"]) for r in conn.execute(
+        "SELECT posted, amount, description FROM transactions WHERE account_id = ? AND affects_balance = 1 "
+        "ORDER BY posted DESC", (account_id,))] for account_id in first}
+    starts = [txs[-1][0] for txs in history.values() if txs]
+    if not starts:
+        return []
+    earliest = min(starts)
+    anchor = min(date.fromisoformat(s["day"]) for s in first.values())
+
+    out, pools = [], {}
     for account_id, s in first.items():
         day0 = date.fromisoformat(s["day"])
-        txs = [(date.fromtimestamp(r["posted"]), r["amount"]) for r in conn.execute(
-            "SELECT posted, amount FROM transactions WHERE account_id = ? AND affects_balance = 1 "
-            "ORDER BY posted DESC", (account_id,))]
-        txs = [t for t in txs if t[0] <= day0]
-        if not txs or txs[-1][0] >= day0:
+        if history[account_id]:
+            txs = [(d, amt) for d, amt, _ in history[account_id] if d <= day0]
+            if txs and txs[-1][0] < day0:
+                out += _walk_back(account_id, day0, s["balance"], txs, txs[-1][0], anchor)
             continue
-        balance, i = s["balance"], 0
-        d = day0 - timedelta(days=7)
-        while d >= txs[-1][0] - timedelta(days=7):
-            # Undo every transaction that happened after day d.
-            while i < len(txs) and txs[i][0] > d:
-                balance -= txs[i][1]
-                i += 1
-            out.append({"account_id": account_id, "day": d.isoformat(), "balance": round(balance, 2)})
-            d -= timedelta(days=7)
+        org = conn.execute("SELECT org_name FROM accounts WHERE id = ?", (account_id,)).fetchone()["org_name"]
+        pools.setdefault(org, []).append(s)
+
+    for org, members in pools.items():
+        words = institution_words(org)
+        # Money leaving your other accounts toward this institution came into it.
+        flows = sorted(((d, -amt) for txs in history.values() for d, amt, desc in txs
+                        if words and any(w in desc.lower() for w in words)), reverse=True)
+        day0 = min(date.fromisoformat(s["day"]) for s in members)
+        flows = [f for f in flows if f[0] <= day0]
+        # The pool's history rides on its biggest account; at the first sync
+        # every member's real balance takes over.
+        lead = max(members, key=lambda s: s["balance"])["account_id"]
+        total = sum(s["balance"] for s in members)
+        out += _walk_back(lead, day0, total, flows, earliest, anchor, floor=0)
     return out
 
 
@@ -339,6 +387,7 @@ def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
     with conn:
         conn.execute("UPDATE transactions SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE merchant_rules SET category = ? WHERE category = ?", (move_to, name))
+        conn.execute("UPDATE transaction_categories SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE description_rules SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (move_to, name))
         conn.execute(
@@ -475,6 +524,34 @@ def delete_rule(merchant: str, conn=Depends(get_conn)):
     return {"ok": True}
 
 
+class TransactionCategoryBody(BaseModel):
+    id: str
+    category: str
+
+
+@app.put("/api/transaction-category")
+def set_transaction_category(body: TransactionCategoryBody, conn=Depends(get_conn)):
+    """Put one transaction in a category, leaving the rest of its merchant alone."""
+    if body.category not in db.category_names(conn):
+        fail(Exception(f"Unknown category: {body.category}"))
+    if not conn.execute("SELECT 1 FROM transactions WHERE id = ?", (body.id,)).fetchone():
+        fail(Exception("That transaction no longer exists."))
+    with conn:
+        conn.execute(
+            "INSERT INTO transaction_categories (tx_id, category) VALUES (?, ?) "
+            "ON CONFLICT(tx_id) DO UPDATE SET category = excluded.category",
+            (body.id, body.category))
+    return {"ok": True}
+
+
+@app.delete("/api/transaction-category")
+def reset_transaction_category(id: str, conn=Depends(get_conn)):
+    """Send one transaction back to its merchant's default category."""
+    with conn:
+        conn.execute("DELETE FROM transaction_categories WHERE tx_id = ?", (id,))
+    return {"ok": True}
+
+
 class DescriptionRuleBody(BaseModel):
     merchant: str
     pattern: str
@@ -513,7 +590,7 @@ def merchant_descriptions(merchant: str, conn=Depends(get_conn)):
         g = groups.setdefault(key, {
             "key": key, "example": t["description"], "count": 0, "total": 0.0,
             "last_date": date.fromtimestamp(t["posted"]).isoformat(),
-            "category": t["category"], "rule": t["description_rule"],
+            "category": t["default_category"], "rule": t["description_rule"],
         })
         g["count"] += 1
         g["total"] = round(g["total"] + t["amount"], 2)
@@ -607,22 +684,43 @@ def delete_merchant_logo(merchant: str, conn=Depends(get_conn)):
 
 @app.get("/api/subscriptions")
 def get_subscriptions(conn=Depends(get_conn)):
-    txs = conn.execute(f"SELECT merchant, posted, amount, category FROM ({TX_SELECT})").fetchall()
+    txs = conn.execute(f"SELECT merchant, posted, amount, category, description_rule FROM ({TX_SELECT})").fetchall()
     overrides = {r["merchant"]: r["status"] for r in conn.execute("SELECT * FROM subscription_overrides")}
+    kinds = {r["key"]: r["kind"] for r in conn.execute("SELECT * FROM recurring_kinds")}
     found = subscriptions.detect(
         [dict(t) for t in txs], date.today(),
         names={t["merchant"]: display_name(t["merchant"]) for t in txs},
-        overrides=overrides)
+        overrides=overrides, kinds=kinds)
     active = [s for s in found if s.active and not s.ignored]
+    total = lambda items, field: round(sum(getattr(s, field) for s in items), 2)
+    subs = [s for s in active if s.kind == "subscription"]
+    bills = [s for s in active if s.kind == "bill"]
     return {
-        "monthly_total": round(sum(s.monthly_cost for s in active), 2),
-        "yearly_total": round(sum(s.yearly_cost for s in active), 2),
+        "monthly_total": total(active, "monthly_cost"),
+        "yearly_total": total(active, "yearly_cost"),
+        "subscriptions_monthly": total(subs, "monthly_cost"),
+        "bills_monthly": total(bills, "monthly_cost"),
         "items": [s.to_dict() for s in found],
     }
 
 
+class KindBody(BaseModel):
+    key: str
+    kind: Literal["bill", "subscription"]
+
+
+@app.put("/api/subscriptions/kind")
+def set_subscription_kind(body: KindBody, conn=Depends(get_conn)):
+    with conn:
+        conn.execute(
+            "INSERT INTO recurring_kinds (key, kind) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET kind = excluded.kind",
+            (body.key, body.kind))
+    return {"ok": True}
+
+
 class OverrideBody(BaseModel):
-    merchant: str
+    merchant: str       # the subscription's key
     status: str | None  # "ignored" or null to restore
 
 

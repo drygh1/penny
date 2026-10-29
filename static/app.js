@@ -386,30 +386,42 @@ $("#category-bars").addEventListener("click", (e) => {
 async function loadSubscriptions() {
   const subs = await api("/api/subscriptions");
   const active = subs.items.filter((s) => s.active && !s.ignored);
+  const activeSubs = active.filter((s) => s.kind === "subscription");
+  const activeBills = active.filter((s) => s.kind === "bill");
   const inactive = subs.items.filter((s) => !s.active && !s.ignored);
   const ignored = subs.items.filter((s) => s.ignored);
+  const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"} · per month`;
 
-  $("#s-monthly").textContent = money(subs.monthly_total);
+  $("#s-monthly").textContent = money(subs.subscriptions_monthly);
+  $("#s-count").textContent = count(activeSubs.length, "subscription");
+  $("#b-monthly").textContent = money(subs.bills_monthly);
+  $("#b-count").textContent = count(activeBills.length, "bill");
   $("#s-yearly").textContent = fmt0.format(subs.yearly_total);
-  $("#s-count").textContent = active.length;
 
   const row = (s, action, label) => {
     const badge = s.previous_amount != null
       ? `<span class="badge">${s.amount > s.previous_amount ? "▲ Price up" : "▼ Price down"} from ${money(s.previous_amount)}</span>` : "";
     const meta = s.active
-      ? `${s.cadence} · next ${dayLabel(s.next_date)} · ${s.category}`
+      ? `${s.cadence} · next ${dayLabel(s.next_date)}`
       : `${s.cadence} · last charged ${dayLabel(s.last_date)}`;
-    const btn = `<button class="link-btn" data-sub-action="${action}" data-merchant="${esc(s.merchant)}">${label}</button>`;
+    const options = categoryNames().map((c) => `<option${c === s.category ? " selected" : ""}>${esc(c)}</option>`).join("");
+    const select = `<select data-sub-merchant="${esc(s.merchant)}"${s.description_rule ? ` data-pattern="${esc(s.description_rule)}" title="Set by a rule for descriptions containing “${esc(s.description_rule)}”"` : ""} aria-label="Category for ${esc(s.name)}">${options}</select>`;
+    const other = s.kind === "bill" ? "subscription" : "bill";
+    const move = s.active && !s.ignored
+      ? `<button class="link-btn" data-sub-kind="${other}" data-key="${esc(s.key)}">Move to ${other}s</button>` : "";
+    const btn = `<button class="link-btn" data-sub-action="${action}" data-key="${esc(s.key)}">${label}</button>`;
     return itemHTML({
       title: s.name, meta, amount: money(s.amount),
       amountMeta: s.cadence === "monthly" ? "" : `${money(s.monthly_cost)}/mo`,
-      extra: badge, category: s.category, merchant: s.merchant, actions: btn,
+      extra: badge, category: s.category, merchant: s.merchant,
+      actions: `<div class="sub-controls">${select}<div class="sub-buttons">${move}${btn}</div></div>`,
     });
   };
   const fill = (el, list, action, label, empty) =>
     ($(el).innerHTML = list.length ? list.map((s) => row(s, action, label)).join("") : `<div class="empty">${empty}</div>`);
 
-  fill("#subs-active", active, "ignore", "Not a subscription", "No recurring charges found yet. They show up after 2 to 3 charges.");
+  fill("#subs-active", activeSubs, "ignore", "Not recurring", "No subscriptions found yet. They show up after 2 to 3 charges.");
+  fill("#bills-active", activeBills, "ignore", "Not recurring", "No bills found yet. Rent and utilities show up here after 2 to 3 charges.");
   fill("#subs-inactive", inactive, "ignore", "Hide", "Nothing here.");
   fill("#subs-ignored", ignored, "restore", "Restore", "Nothing hidden.");
 }
@@ -419,8 +431,28 @@ document.addEventListener("click", async (e) => {
   if (!btn) return;
   await api("/api/subscriptions/override", {
     method: "POST",
-    body: { merchant: btn.dataset.merchant, status: btn.dataset.subAction === "ignore" ? "ignored" : null },
+    body: { merchant: btn.dataset.key, status: btn.dataset.subAction === "ignore" ? "ignored" : null },
   });
+  loadSubscriptions();
+});
+
+$("#view-subscriptions").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-sub-kind]");
+  if (!btn) return;
+  await api("/api/subscriptions/kind", { method: "PUT", body: { key: btn.dataset.key, kind: btn.dataset.subKind } });
+  loadSubscriptions();
+});
+
+$("#view-subscriptions").addEventListener("change", async (e) => {
+  const sel = e.target.closest("select[data-sub-merchant]");
+  if (!sel) return;
+  const { subMerchant: merchant, pattern } = sel.dataset;
+  // Same as the transactions list: a category set by a description rule changes that rule.
+  if (pattern) {
+    await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category: sel.value } });
+  } else {
+    await api("/api/merchant-rules", { method: "PUT", body: { merchant, category: sel.value } });
+  }
   loadSubscriptions();
 });
 
@@ -452,7 +484,11 @@ async function loadTransactions() {
     ? rows.map((t) => `<tr>
         <td>${dayLabel(t.date)}</td>
         <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<div class="meta">${esc(t.description)}</div></div></div></td>
-        <td class="cat">${dot(t.category)}<select data-merchant="${esc(t.merchant)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}" title="Set by a rule for descriptions containing “${esc(t.description_rule)}”"` : ""} aria-label="Category">${catOptions(t.category)}</select></td>
+        <td class="cat">${dot(t.category)}<select data-tx-id="${esc(t.id)}" aria-label="Category">${catOptions(t.category)}</select>${t.edited
+          ? `<div class="meta tx-edited">Just this one ·
+              <button class="link-btn" data-tx-reset="${esc(t.id)}" title="Back to ${esc(t.default_category)}">Reset</button> ·
+              <button class="link-btn" data-tx-default="${esc(t.id)}" data-merchant="${esc(t.merchant)}" data-category="${esc(t.category)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}>Use for all ${t.description_rule ? `“${esc(t.description_rule)}”` : esc(t.name)}</button></div>`
+          : ""}</td>
         <td class="muted">${esc(t.account_name)}</td>
         <td class="num ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</td>
       </tr>`).join("")
@@ -465,15 +501,25 @@ $("#tx-search").oninput = (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { txFilters.q = e.target.value; loadTransactions(); }, 250);
 };
+// The dropdown changes just that purchase. A merchant's default category is set
+// on the Merchants page, or from an edited purchase with "Use for all".
 $("#tx-body").addEventListener("change", async (e) => {
-  if (!e.target.matches("select[data-merchant]")) return;
-  const { merchant, pattern } = e.target.dataset;
-  // A row set by a description rule changes that rule, not the whole merchant.
-  if (pattern) {
-    await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category: e.target.value } });
-  } else {
-    await api("/api/merchant-rules", { method: "PUT", body: { merchant, category: e.target.value } });
-  }
+  if (!e.target.matches("select[data-tx-id]")) return;
+  await api("/api/transaction-category", { method: "PUT", body: { id: e.target.dataset.txId, category: e.target.value } });
+  loadTransactions();
+});
+$("#tx-body").addEventListener("click", async (e) => {
+  const reset = e.target.closest("[data-tx-reset]");
+  const makeDefault = e.target.closest("[data-tx-default]");
+  if (reset) {
+    await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
+  } else if (makeDefault) {
+    const { merchant, category, pattern, txDefault } = makeDefault.dataset;
+    // A purchase under a description rule changes that rule, which wins over the merchant's default.
+    if (pattern) await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category } });
+    else await api("/api/merchant-rules", { method: "PUT", body: { merchant, category } });
+    await api(`/api/transaction-category?id=${encodeURIComponent(txDefault)}`, { method: "DELETE" });
+  } else return;
   loadTransactions();
 });
 

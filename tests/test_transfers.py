@@ -84,3 +84,13 @@ def test_investing_is_neither_spending_nor_income(client):
     assert {cats[d] for d in cats if "GROCERY" not in d} == {"Investments"}
     month = client.get("/api/spending/monthly").json()[-1]
     assert month["spending"] == 40.00 and month["income"] == 0
+
+
+def test_card_payment_pairs_as_a_card_payment(client):
+    # Only the checking side names the card; the card side's wording means nothing on its own.
+    new_account(client, "Checking", [(this_month, "Withdrawal ACH CAPITAL ONE TYPE: PAYMENT", -2480.00)])
+    new_account(client, "Card", [(this_month, "ONLINE/MOBILE RECURRING", 2480.00)])
+    cats = categories_by_desc(client)
+    assert cats["ONLINE/MOBILE RECURRING"] == "Credit Card Payments"
+    month = client.get("/api/spending/monthly").json()[-1]
+    assert month["spending"] == 0 and month["income"] == 0

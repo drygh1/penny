@@ -106,20 +106,24 @@
 
     <section id="view-subscriptions" class="view" hidden>
       <div class="tiles">
-        <div class="tile"><div class="label">Monthly</div><div class="value" id="s-monthly"></div></div>
-        <div class="tile"><div class="label">Yearly</div><div class="value" id="s-yearly"></div></div>
-        <div class="tile"><div class="label">Active</div><div class="value" id="s-count"></div></div>
+        <div class="tile"><div class="label">Subscriptions</div><div class="value" id="s-monthly"></div><div class="sub" id="s-count"></div></div>
+        <div class="tile"><div class="label">Bills</div><div class="value" id="b-monthly"></div><div class="sub" id="b-count"></div></div>
+        <div class="tile"><div class="label">Yearly, both</div><div class="value" id="s-yearly"></div></div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>Active subscriptions &amp; bills</h2></div>
+        <div class="card-head"><h2>Subscriptions</h2><span class="muted">Things you could cancel</span></div>
         <div id="subs-active" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Bills</h2><span class="muted">Rent, utilities and other must-pays</span></div>
+        <div id="bills-active" class="list"></div>
       </div>
       <div class="card">
         <div class="card-head"><h2>Stopped charging</h2><span class="muted">No charge when one was expected. Probably cancelled.</span></div>
         <div id="subs-inactive" class="list"></div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>Hidden</h2><span class="muted">Things you marked as not a subscription</span></div>
+        <div class="card-head"><h2>Hidden</h2><span class="muted">Things you marked as not recurring</span></div>
         <div id="subs-ignored" class="list"></div>
       </div>
     </section>

@@ -24,8 +24,8 @@ def test_every_category_has_its_own_color(client):
 
 def test_add_category_takes_free_color_after_delete(client):
     assert client.post("/api/categories", json={"name": "Kids"}).status_code == 200
-    assert cats(client)["Kids"]["color_slot"] == 17  # the 16 starting categories use 1-16
-    for name in ("Pets", "Gifts", "Hobbies"):  # slots 18-20
+    assert cats(client)["Kids"]["color_slot"] == 18  # the 17 starting categories use 1-17
+    for name in ("Pets", "Gifts"):  # slots 19-20
         client.post("/api/categories", json={"name": name})
     client.post("/api/categories", json={"name": "Garden"})
     assert cats(client)["Garden"]["color_slot"] is None  # all 20 colors in use
@@ -106,3 +106,32 @@ def test_cash_is_added_once_to_older_databases(tmp_path, monkeypatch):
     with conn:  # deleting it later sticks
         conn.execute("DELETE FROM categories WHERE name = 'Cash'")
     assert "Cash" not in db.category_names(db.connect())
+
+
+def test_one_purchase_can_differ_from_its_merchant(client):
+    txs = client.get("/api/transactions").json()
+    merchant = max({t["merchant"] for t in txs}, key=lambda m: sum(t["merchant"] == m for t in txs))
+    first, *rest = [t for t in txs if t["merchant"] == merchant]
+    assert rest
+    client.put("/api/merchant-rules", json={"merchant": merchant, "category": "Shopping"})
+    assert client.put("/api/transaction-category", json={"id": first["id"], "category": "Health"}).status_code == 200
+
+    by_id = {t["id"]: t for t in client.get("/api/transactions", params={"merchant": merchant}).json()}
+    assert by_id[first["id"]]["category"] == "Health" and by_id[first["id"]]["edited"]
+    assert by_id[first["id"]]["default_category"] == "Shopping"
+    assert all(by_id[t["id"]]["category"] == "Shopping" and not by_id[t["id"]]["edited"] for t in rest)
+
+    # Changing the merchant's default leaves the edited purchase alone.
+    client.put("/api/merchant-rules", json={"merchant": merchant, "category": "Travel"})
+    by_id = {t["id"]: t for t in client.get("/api/transactions", params={"merchant": merchant}).json()}
+    assert by_id[first["id"]]["category"] == "Health"
+
+    # Deleting its category moves it along with everything else.
+    client.delete("/api/categories", params={"name": "Health", "move_to": "Fees"})
+    by_id = {t["id"]: t for t in client.get("/api/transactions", params={"merchant": merchant}).json()}
+    assert by_id[first["id"]]["category"] == "Fees"
+
+    client.delete("/api/transaction-category", params={"id": first["id"]})
+    by_id = {t["id"]: t for t in client.get("/api/transactions", params={"merchant": merchant}).json()}
+    assert by_id[first["id"]]["category"] == "Travel" and not by_id[first["id"]]["edited"]
+    assert client.put("/api/transaction-category", json={"id": "nope", "category": "Fees"}).status_code == 400

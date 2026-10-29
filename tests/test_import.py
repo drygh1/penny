@@ -149,3 +149,25 @@ Date,Description,Amount,Running Bal.
 """
     _, txs, errors = run(text)
     assert errors == [] and [t["amount"] for t in txs] == [-40.00]
+
+
+def test_money_into_a_brokerage_without_transactions_does_not_vanish(client):
+    from app import db
+    text = csv_for([(date.today() - timedelta(days=200), "PAYCHECK PAYROLL", 2000),
+                    (date.today() - timedelta(days=100), "Withdrawal ACH VANGUARD BUY INVESTMENT", -6000)])
+    mapping = client.post("/api/import/preview", json={"csv": text}).json()["mapping"]
+    client.post("/api/import", json={"csv": text, "mapping": mapping,
+                                     "new_account": {"name": "Savings", "balance": 3000}})
+    # A brokerage reports today's balance but none of its own transactions.
+    conn = db.connect()
+    with conn:
+        conn.execute("INSERT INTO accounts (id, org_name, name, balance) VALUES ('ira', 'Vanguard', 'Retirement Account', 8000)")
+        conn.execute("INSERT INTO balance_snapshots (account_id, day, balance) VALUES ('ira', ?, 8000)",
+                     (date.today().isoformat(),))
+    history = client.get("/api/accounts").json()["history"]
+    # Before the deposit: 9000 in savings, 2000 at the brokerage. After: 3000 and 8000.
+    between = lambda a, b: [h["net_worth"] for h in history
+                            if (date.today() - timedelta(days=a)).isoformat() <= h["day"] < (date.today() - timedelta(days=b)).isoformat()]
+    assert set(between(193, 100)) == {11000}  # after the paycheck, before the deposit
+    assert set(between(100, 0)) == {11000}    # the deposit never shows as a drop
+    assert history[0]["net_worth"] == 9000    # before the paycheck

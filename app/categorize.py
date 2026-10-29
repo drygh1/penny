@@ -12,6 +12,7 @@ import re
 DEFAULT_CATEGORIES = [
     "Income",
     "Transfers",
+    "Credit Card Payments",
     "Investments",
     "Housing",
     "Utilities & Bills",
@@ -29,12 +30,12 @@ DEFAULT_CATEGORIES = [
 ]
 # Defaults added after the first release, for databases seeded before them:
 # name -> the category it goes just before.
-LATER_DEFAULT_CATEGORIES = {"Cash": "Fees", "Investments": "Housing"}
+LATER_DEFAULT_CATEGORIES = {"Cash": "Fees", "Investments": "Housing", "Credit Card Payments": "Investments"}
 
 # Categories that aren't spending: money coming in, money moving between your
-# own accounts, and money put into investments (it's still yours, so it counts
-# toward what you saved).
-NON_SPENDING = {"Transfers", "Income", "Investments"}
+# own accounts, paying off a card (the purchases on it already counted), and
+# money put into investments (it's still yours, so it counts toward what you saved).
+NON_SPENDING = {"Transfers", "Credit Card Payments", "Income", "Investments"}
 
 # Spending math depends on Income and Transfers, and Other is the fallback,
 # so these three can't be deleted.
@@ -48,13 +49,16 @@ DEFAULT_COLOR_SLOTS = {
     "Housing": 1, "Dining": 2, "Groceries": 3, "Transportation": 4, "Shopping": 5,
     "Utilities & Bills": 6, "Subscriptions": 7, "Entertainment": 8,
     "Income": 9, "Transfers": 10, "Health": 11, "Travel": 12, "Fees": 13, "Other": 14, "Cash": 15,
-    "Investments": 16,
+    "Investments": 16, "Credit Card Payments": 17,
 }
 
 # Checked in order against the lowercased raw description; first match wins.
 KEYWORDS = [
-    ("Transfers", ["transfer", "payment thank you", "thank you", "autopay", "autopymt", "internet payment", "online payment", "card payment",
-                   "credit card pmt", "epay", "to savings", "from savings", "venmo cashout",
+    # Card-side wording; payments sent from checking are caught by _CARD_PAYMENT below.
+    ("Credit Card Payments", ["payment thank you", "thank you", "payment - thank", "card payment",
+                              "credit card pmt", "crcardpmt", "cardmember serv"]),
+    ("Transfers", ["transfer", "autopay", "autopymt", "internet payment", "online payment",
+                   "epay", "to savings", "from savings", "venmo cashout",
                    "contribution", "electronic payment", "mobile payment", "payment - thank",
                    "to share", "from share",  # credit unions call accounts "shares"
                    "online pmt", "e-payment",
@@ -101,11 +105,53 @@ KEYWORDS = [
                   "ikea", "etsy", "ebay", "rei", "nordstrom", "old navy", "apple store"]),
 ]
 
+# How each brokerage shows up in your bank's descriptions, keyed by a word in
+# the institution's name ("Fidelity Investments"). Lets the Net worth chart see
+# money moving into accounts that don't report their own transactions.
+INSTITUTION_WORDS = {
+    "fidelity": ["fidelity", "fid bkg"],
+    "coinbase": ["coinbase"],
+    "robinhood": ["robinhood"],
+    "vanguard": ["vanguard"],
+    "schwab": ["schwab"],
+    "betterment": ["betterment"],
+    "wealthfront": ["wealthfront"],
+    "acorns": ["acorns"],
+    "e*trade": ["e*trade", "etrade"],
+}
+
+
+def institution_words(org_name: str | None) -> list[str]:
+    """Words that name this institution in a bank description; [] if unknown."""
+    org = (org_name or "").lower()
+    return next((words for key, words in INSTITUTION_WORDS.items() if key in org), [])
+
+
 # Keywords must start at a word boundary, so "rent" doesn't match "current".
 _PATTERNS = [
     (category, re.compile("|".join(r"(?<![a-z])" + re.escape(k) for k in keywords)))
     for category, keywords in KEYWORDS
 ]
+
+# Paying a card from checking: a card issuer and a payment word, like
+# "ACH BK OF AMER VISA TYPE: ONLINE PMT" or "DISCOVER E-PAYMENT".
+_CARD_ISSUER = re.compile(
+    r"(?<![a-z])(amex|american express|discover|chase card|chase credit|capital one|citi card|citicard|"
+    r"barclay|synchrony|bk of amer|bank of america|wells fargo card|apple card|applecard|"
+    r"credit one|us bank card|visa|mastercard)")
+_PAYMENT_WORD = re.compile(r"(?<![a-z])(e-?payment|payment|pymt|pmt|autopay)")
+# Money arriving on a card labeled as a payment, like "BA ELECTRONIC PAYMENT".
+_PAYMENT_RECEIVED = re.compile(r"(?<![a-z])(electronic|online|mobile|internet|ach|autopay)\W*(payment|pmt|pymt)")
+_NOT_A_CARD = re.compile(r"mortgage|home loan|auto loan|purchase")
+
+
+def _is_card_payment(text: str, amount: float) -> bool:
+    if _NOT_A_CARD.search(text):
+        return False
+    if amount < 0:
+        return bool(_CARD_ISSUER.search(text) and _PAYMENT_WORD.search(text))
+    return bool(_PAYMENT_RECEIVED.search(text))
+
 
 _NOISE_WORDS = {
     "pos", "debit", "credit", "purchase", "card", "recurring", "payment", "ach", "withdrawal",
@@ -161,6 +207,8 @@ def display_name(merchant: str) -> str:
 
 def categorize(description: str, amount: float) -> str:
     text = description.lower()
+    if _is_card_payment(text, amount):
+        return "Credit Card Payments"
     for category, pattern in _PATTERNS:
         if pattern.search(text):
             # A positive amount at a store (a refund) keeps the store's

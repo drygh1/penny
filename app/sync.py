@@ -121,7 +121,7 @@ def recategorize_all(conn) -> int:
 TRANSFER_WINDOW_DAYS = 4
 # Only transactions Penny couldn't otherwise place are paired, so a $20 dinner
 # never pairs with a $20 payment from a friend.
-_PAIRABLE = {"Other", "Income", "Transfers"}
+_PAIRABLE = {"Other", "Income", "Transfers", "Credit Card Payments"}
 
 
 def match_transfers(conn) -> int:
@@ -131,7 +131,8 @@ def match_transfers(conn) -> int:
     different account within a few days are the two sides of one transfer
     (savings to checking, or checking paying off a credit card), whatever
     words the bank uses. Both sides become Transfers, so the move counts as
-    neither spending nor income.
+    neither spending nor income. When either side reads as a card payment, both
+    become Credit Card Payments instead.
     """
     rows = conn.execute(
         "SELECT id, account_id, posted, amount, category FROM transactions WHERE amount != 0 ORDER BY posted"
@@ -152,9 +153,10 @@ def match_transfers(conn) -> int:
             continue
         d = min(candidates, key=lambda d: abs(d["posted"] - w["posted"]))
         deposits[round(d["amount"] * 100)].remove(d)
-        paired += [w["id"], d["id"]]
-    conn.executemany("UPDATE transactions SET category = 'Transfers' WHERE id = ? AND category != 'Transfers'",
-                     [(i,) for i in paired])
+        card = "Credit Card Payments" in (w["category"], d["category"])
+        paired += [(i, "Credit Card Payments" if card else "Transfers") for i in (w["id"], d["id"])]
+    conn.executemany("UPDATE transactions SET category = ? WHERE id = ? AND category != ?",
+                     [(cat, i, cat) for i, cat in paired])
     return len(paired) // 2
 
 

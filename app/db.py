@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS description_rules (
     PRIMARY KEY (merchant, pattern)
 );
 
+-- One transaction put in a category by hand. Wins over every rule.
+CREATE TABLE IF NOT EXISTS transaction_categories (
+    tx_id    TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+    category TEXT NOT NULL
+);
+
 -- Profile pictures for merchants, resized in the browser before upload.
 CREATE TABLE IF NOT EXISTS merchant_logos (
     merchant TEXT PRIMARY KEY,
@@ -72,8 +78,14 @@ CREATE TABLE IF NOT EXISTS merchant_logos (
 
 -- User overrides for detected subscriptions ('ignored').
 CREATE TABLE IF NOT EXISTS subscription_overrides (
-    merchant TEXT PRIMARY KEY,
+    merchant TEXT PRIMARY KEY,  -- the subscription's key: a merchant, or "merchant|price"
     status   TEXT NOT NULL
+);
+
+-- Recurring charges the user moved between bills and subscriptions.
+CREATE TABLE IF NOT EXISTS recurring_kinds (
+    key  TEXT PRIMARY KEY,      -- same keys as subscription_overrides
+    kind TEXT NOT NULL CHECK (kind IN ('bill', 'subscription'))
 );
 
 -- The user's categories. color_slot is 1-20 (a palette color) or NULL (gray, past 20).
