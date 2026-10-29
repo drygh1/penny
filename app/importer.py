@@ -27,6 +27,8 @@ def parse_table(text: str) -> tuple[list[str], list[list[str]]]:
 
     Some banks put account details above the real header, so the header is the
     first row (within the top 15) that has a date column and a money column.
+    A row holding an actual date is a transaction, not a header, even when its
+    description happens to say "Date" and "Debit" (some credit unions' do).
     """
     text = text.lstrip("﻿")
     try:
@@ -41,7 +43,8 @@ def parse_table(text: str) -> tuple[list[str], list[list[str]]]:
         raise ValueError("That file is empty.")
 
     header_at = next((i for i, r in enumerate(rows[:15])
-                      if any(_HEADER_DATE.search(c) for c in r) and any(_HEADER_MONEY.search(c) for c in r)),
+                      if any(_HEADER_DATE.search(c) for c in r) and any(_HEADER_MONEY.search(c) for c in r)
+                      and not any(detect_date_format([c]) for c in r if c.strip())),
                      None)
     if header_at is None:
         width = max(len(r) for r in rows)
@@ -220,20 +223,31 @@ def to_simplefin_shape(txs: list[dict], affects_balance: bool = True) -> list[di
     return out
 
 
+def _same_purchase_key(row) -> tuple:
+    """Day, amount in cents, and the first 8 letters/digits of the description."""
+    name = re.sub(r"[^a-z0-9]", "", row["description"].lower())[:8]
+    return (date.fromtimestamp(row["posted"]), round(row["amount"] * 100), name)
+
+
 def drop_overlap(conn, account_id: str) -> int:
     """Delete imported rows that duplicate a transaction SimpleFIN already has.
 
     Matches one-to-one on account, exact amount, and dates within a few days.
+    Only imported rows from the days SimpleFIN covers are considered: there
+    both sources list every purchase, so two $7.25 drinks pair up with their
+    own copies, while an older imported $7.25 can't pair with a newer one.
     Runs after every import and every sync, so the order you do them in
     doesn't matter.
     """
     csv_prefix = f"{account_id}:csv:%"
+    first_synced = conn.execute("SELECT MIN(posted) FROM transactions WHERE account_id = ? AND id NOT LIKE ?",
+                                (account_id, csv_prefix)).fetchone()[0]
     pool = defaultdict(list)  # cents -> [(posted, id)] of imported rows
-    for r in conn.execute("SELECT id, posted, amount FROM transactions WHERE account_id = ? AND id LIKE ?",
-                          (account_id, csv_prefix)):
-        pool[round(r["amount"] * 100)].append((r["posted"], r["id"]))
-    if not pool:
-        return 0
+    if first_synced is not None:
+        # A day's grace: SimpleFIN dates a purchase when it's made, statements when it posts.
+        for r in conn.execute("SELECT id, posted, amount FROM transactions WHERE account_id = ? AND id LIKE ? "
+                              "AND posted >= ?", (account_id, csv_prefix, first_synced - 86400)):
+            pool[round(r["amount"] * 100)].append((r["posted"], r["id"]))
 
     doomed = []
     window = MATCH_WINDOW_DAYS * 86400
@@ -246,5 +260,23 @@ def drop_overlap(conn, account_id: str) -> int:
         if abs(best[0] - r["posted"]) <= window:
             candidates.remove(best)
             doomed.append(best[1])
+
+    # A year-end summary and a monthly statement can both cover the last days
+    # of December, wording each purchase a little differently ("SAFEWAY #1820
+    # JUNEAU AK" vs "SAFEWAY 1820 JUNEAU, AK"). Both use the posting date, so a
+    # duplicate has the same day, amount and start of name. Matching is one to
+    # one, so two identical drinks the same day are both kept. The statement
+    # row (which also keeps balances right) wins.
+    summary = defaultdict(list)  # (day, cents, name) -> ids of year-end summary rows
+    for r in conn.execute("SELECT id, posted, amount, description FROM transactions WHERE account_id = ? "
+                          "AND id LIKE ? AND affects_balance = 0", (account_id, csv_prefix)):
+        if r["id"] not in doomed:
+            summary[_same_purchase_key(r)].append(r["id"])
+    if summary:
+        for r in conn.execute("SELECT id, posted, amount, description FROM transactions WHERE account_id = ? "
+                              "AND affects_balance = 1", (account_id,)):
+            candidates = summary.get(_same_purchase_key(r))
+            if candidates and r["id"] not in doomed:
+                doomed.append(candidates.pop())
     conn.executemany("DELETE FROM transactions WHERE id = ?", [(i,) for i in doomed])
     return len(doomed)

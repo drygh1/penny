@@ -62,14 +62,26 @@ SimpleFIN only reaches back about 90 days. For older transactions:
 
 **Undo:** remove an import with the **Remove** button under "Imported so far".
 
+## Your data is kept safe
+
+- **Everything stays.** Transactions remain in Penny after they're older than SimpleFIN's 90-day window, and after you disconnect.
+- **Originals are kept.** Every raw SimpleFIN download and every CSV or PDF you import is stored (compressed) in the database, exactly as received.
+- **Automatic backups.** Penny copies its database once a day (when it starts, syncs or imports) and before anything destructive: deleting data, removing an import, deleting a category, or restoring. It keeps 14 daily and 12 monthly copies, plus the last 20 safety copies, in `~/Library/Application Support/Penny/backups`. That folder is outside the project, readable only by you, never synced to a cloud service, and included in Time Machine if you use it.
+- **Restore** any backup from **Settings → Your data → Restore a backup**. The current state is backed up first, so a restore can be undone.
+
 ## Merchant rules and pictures
 
 The **Merchants** page lists everyone you've paid. For each merchant you can:
 
 - **Pick a category.** This creates a rule that applies to all past and future transactions from that merchant. Choose "Automatic" to remove the rule.
 - **Add a picture.** Click the circle or "Add picture" and choose a PNG or JPEG. The picture is cropped to a square, shrunk, and stored in the database. It shows up everywhere that merchant appears.
+- **Treat some descriptions differently.** Click **Descriptions** to see each different description the merchant uses, in full. For example, a payment app might use "...TYPE: CASHOUT..." and "...TYPE: PAYMENT...". Give any of them its own category, or add a rule like "description contains *cashout*". Numbers are ignored when matching, so trace and store numbers don't matter. A description rule beats the merchant's category, and the more specific rule wins.
 
-Changing a category on the **Transactions** page creates the same kind of rule.
+Changing a category on the **Transactions** page creates the same kind of rule. If the row's category came from a description rule, it changes that rule instead.
+
+## Dates
+
+Transactions are dated the day you made the purchase, not the day the bank posted it (which can be a few days later). The date comes from SimpleFIN, or from the "Date 10/24/26" some banks write into the description.
 
 ## Categories
 

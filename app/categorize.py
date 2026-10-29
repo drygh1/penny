@@ -45,8 +45,10 @@ DEFAULT_COLOR_SLOTS = {
 KEYWORDS = [
     ("Transfers", ["transfer", "payment thank you", "thank you", "autopay", "autopymt", "internet payment", "online payment", "card payment",
                    "credit card pmt", "epay", "to savings", "from savings", "venmo cashout",
-                   "contribution", "electronic payment", "mobile payment", "payment - thank"]),
-    ("Income", ["payroll", "direct dep", "salary", "interest paid", "dividend", "tax refund"]),
+                   "contribution", "electronic payment", "mobile payment", "payment - thank",
+                   "to share", "from share",  # credit unions call accounts "shares"
+                   "online pmt", "e-payment"]),
+    ("Income", ["payroll", "direct dep", "autodep", "salary", "interest paid", "dividend", "tax refund"]),
     ("Housing", ["rent", "mortgage", "hoa ", "property mgmt", "apartments"]),
     ("Utilities & Bills", ["electric", "energy", "water", "gas co", "utility", "comcast", "xfinity",
                            "verizon", "at&t", "t-mobile", "tmobile", "internet", "insurance",
@@ -96,8 +98,29 @@ _NOISE_WORDS = {
 }
 
 
+_ACH_COMPANY = re.compile(r"\bco:\s*(.+?)\s*(?:ach trace|name:|data:|type:|$)")
+_OWN_TRANSFER = re.compile(r"^(?:withdrawal |deposit )?(?:home banking )?(to|from) share\b")
+_BANK_PREFIX = re.compile(r"^(?:withdrawal|deposit)\b\s*(?:home banking\b)?")
+_PURCHASE_DATE_TAIL = re.compile(r"date:?\s*\d.*$")
+
+
+def _strip_bank_wording(description: str) -> str:
+    """Reduce a bank's raw description to the part naming the merchant.
+
+    Only used when there's no payee (CSV imports). Credit unions wrap every
+    line in "Withdrawal ... Date 10/24/26 PURCH ..." and name ACH senders
+    after "CO:". Transfers between shares get the same names SimpleFIN uses.
+    """
+    s = description.lower().replace("%%", " ")
+    if m := _OWN_TRANSFER.match(s):
+        return f"transfer {m[1]} share"
+    if m := _ACH_COMPANY.search(s):
+        return m[1]
+    return _PURCHASE_DATE_TAIL.sub("", _BANK_PREFIX.sub("", s))
+
+
 def normalize_merchant(description: str, payee: str | None = None) -> str:
-    s = (payee or description).lower()
+    s = payee.lower() if payee else _strip_bank_wording(description)
     s = re.sub(r"https?://", " ", s)
     s = re.sub(r"\.(com|net|org|io)\b", " ", s)
     s = re.sub(r"[^a-z&' ]+", " ", s)  # drop digits, punctuation, store numbers
@@ -107,6 +130,12 @@ def normalize_merchant(description: str, payee: str | None = None) -> str:
         words = words[:-1]
     key = " ".join(words[:2])
     return key or (payee or description).lower().strip()
+
+
+def description_key(description: str | None) -> str:
+    """A description without its digits, so every "VENMO ... PAYMENT ... Trace 0910..."
+    line reads the same. Description rules match against this."""
+    return " ".join(re.sub(r"\d+", " ", (description or "").lower()).split())
 
 
 def display_name(merchant: str) -> str:

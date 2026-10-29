@@ -10,11 +10,17 @@ const monthLabel = (ym, style = "short") => {
   const [y, m] = ym.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: style, year: style === "long" ? "numeric" : "2-digit" });
 };
-const dayLabel = (iso) => {
+const dayLabel = (iso, withYear = false) => {
   const d = new Date(iso + "T12:00:00");
   const opts = { month: "short", day: "numeric" };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  if (withYear || d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
   return d.toLocaleDateString("en-US", opts);
+};
+// "Nov 21, 2023 to Oct 1, 2026". The year is left off only when both ends are this year.
+const rangeLabel = (first, last) => {
+  const thisYear = String(new Date().getFullYear());
+  const withYear = !(first.startsWith(thisYear) && last.startsWith(thisYear));
+  return `${dayLabel(first, withYear)} to ${dayLabel(last, withYear)}`;
 };
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const thisMonth = () => isoDay(new Date()).slice(0, 7);
@@ -74,7 +80,7 @@ async function route() {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
-  const loaders = { settings: () => Promise.all([loadCategories(), loadImport()]), dashboard: loadDashboard, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
+  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), loadData()]), dashboard: loadDashboard, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
   if (loaders[view]) await loaders[view]();
 }
 
@@ -116,48 +122,48 @@ function drawChart(id, config) {
 
 // ---------- dashboard ----------
 
+// The period being looked at: a year, plus a month ("01".."12") or "" for the whole year.
+const period = { year: thisMonth().slice(0, 4), month: thisMonth().slice(5) };
+const periodKey = () => period.month ? `${period.year}-${period.month}` : period.year;
+const periodLabel = (key = periodKey()) => key.length === 4 ? key : monthLabel(key, "long");
+let years = [];
+
 async function loadDashboard() {
-  const [monthly, accounts, subs] = await Promise.all([
-    api("/api/spending/monthly?months=12"),
+  const [periods, flow, accounts, subs, b] = await Promise.all([
+    api("/api/periods"),
+    api(flowView === "years" ? "/api/spending/yearly" : `/api/spending/monthly?year=${period.year}`),
     api("/api/accounts"),
     api("/api/subscriptions"),
+    api(`/api/spending/breakdown?period=${periodKey()}`),
   ]);
+  years = periods.years.length ? periods.years : [period.year];
+  if (!years.includes(period.year)) years = [period.year, ...years].sort().reverse();
+  renderPeriodControls();
 
+  const key = periodKey();
+  const ongoing = key === thisMonth() || key === thisMonth().slice(0, 4);
+  $("#period-title").textContent = periodLabel() + (ongoing ? " so far" : "");
+  for (const id of ["#went-period", "#came-period", "#merchants-period"]) $(id).textContent = periodLabel();
+  $("#flow-title").textContent = flowView === "years" ? "Income & spending by year" : `Income & spending in ${period.year}`;
+  $("#flow-hint").textContent = `Click a ${flowView === "years" ? "year" : "month"} to look closer. ` +
+    "Transfers between your accounts aren't counted as income or spending.";
+  document.querySelectorAll("[data-flow-view]").forEach((btn) => btn.setAttribute("aria-pressed", btn.dataset.flowView === flowView));
+
+  // Tiles: compare with the previous period of the same length.
+  const prev = await api(`/api/spending/breakdown?period=${shiftPeriod(-1)}`);
+  $("#t-income").textContent = fmt0.format(b.income);
+  $("#t-spent").textContent = fmt0.format(b.total);
+  $("#t-saved").textContent = (b.net < 0 ? "−" : "") + fmt0.format(Math.abs(b.net));
+  $("#t-saved").className = "value " + (b.net < 0 ? "negative-text" : "");
+  $("#t-income-sub").innerHTML = compare(b.income, prev.income, true);
+  $("#t-spent-sub").innerHTML = compare(b.total, prev.total, false);
+  $("#t-saved-sub").textContent = b.income > 0
+    ? `${Math.round((b.net / b.income) * 100)}% of income` : "";
   $("#t-networth").textContent = fmt0.format(accounts.net_worth);
-  $("#t-subs").textContent = money(subs.monthly_total);
+  $("#t-subs").textContent = `${money(subs.monthly_total)}/mo in subscriptions & bills`;
 
-  const cur = monthly.find((m) => m.month === thisMonth());
-  const prev = monthly.find((m) => m.month === prevMonth(thisMonth()));
-  $("#t-spent").textContent = fmt0.format(cur?.spending ?? 0);
-  if (prev) {
-    const diff = (cur?.spending ?? 0) - prev.spending;
-    $("#t-spent-sub").innerHTML = `<span class="${diff > 0 ? "delta-up" : "delta-down"}">${diff > 0 ? "▲" : "▼"} ${fmt0.format(Math.abs(diff))}</span> vs all of last month`;
-  }
-
-  drawChart("chart-monthly", {
-    type: "bar",
-    data: {
-      labels: monthly.map((m) => monthLabel(m.month)),
-      datasets: [{
-        data: monthly.map((m) => m.spending),
-        backgroundColor: monthly.map((m) => (m.month === thisMonth() ? css("--accent-soft") : css("--accent"))),
-        borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom",
-        maxBarThickness: 36, categoryPercentage: 0.7,
-      }],
-    },
-    options: (() => {
-      const o = baseChartOptions();
-      o.plugins.tooltip.callbacks.title = (items) => monthLabel(monthly[items[0].dataIndex].month, "long") + (monthly[items[0].dataIndex].month === thisMonth() ? " (so far)" : "");
-      o.onClick = (_, els) => { if (els.length) setBreakdownMonth(monthly[els[0].index].month); };
-      o.onHover = (e, els) => (e.native.target.style.cursor = els.length ? "pointer" : "default");
-      return o;
-    })(),
-  });
-
-  const sel = $("#breakdown-month");
-  sel.innerHTML = [...monthly].reverse().map((m) => `<option value="${m.month}">${monthLabel(m.month, "long")}</option>`).join("");
-  sel.onchange = () => loadBreakdown(sel.value);
-  await loadBreakdown(sel.value || thisMonth());
+  drawFlowChart(flow);
+  renderBreakdown(b);
 
   // Upcoming charges in the next 30 days
   const soon = new Date(); soon.setDate(soon.getDate() + 30);
@@ -173,35 +179,129 @@ async function loadDashboard() {
     : `<div class="empty">Nothing expected in the next 30 days.</div>`;
 }
 
-function prevMonth(ym) {
-  const [y, m] = ym.split("-").map(Number);
-  const d = new Date(y, m - 2, 1);
+// "▲ $321 vs September". Up is good for income, bad for spending.
+function compare(now, before, upIsGood) {
+  if (!before) return "";
+  const diff = now - before;
+  if (Math.abs(diff) < 0.5) return `Same as ${periodLabel(shiftPeriod(-1))}`;
+  const good = (diff > 0) === upIsGood;
+  return `<span class="${good ? "delta-down" : "delta-up"}">${diff > 0 ? "▲" : "▼"} ${fmt0.format(Math.abs(diff))}</span> vs ${periodLabel(shiftPeriod(-1))}`;
+}
+
+// The period `step` months (or years, when viewing a whole year) away.
+function shiftPeriod(step) {
+  if (!period.month) return String(Number(period.year) + step);
+  const d = new Date(Number(period.year), Number(period.month) - 1 + step, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function setBreakdownMonth(month) {
-  $("#breakdown-month").value = month;
-  loadBreakdown(month);
+function setPeriod(key) {
+  period.year = key.slice(0, 4);
+  period.month = key.length === 7 ? key.slice(5) : "";
+  loadDashboard();
 }
 
-async function loadBreakdown(month) {
-  const b = await api(`/api/spending/breakdown?month=${month}`);
+function renderPeriodControls() {
+  $("#period-year").innerHTML = years.map((y) => `<option${y === period.year ? " selected" : ""}>${y}</option>`).join("");
+  const names = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleDateString("en-US", { month: "long" }));
+  $("#period-month").innerHTML = `<option value="">Whole year</option>` + names.map((n, i) => {
+    const m = String(i + 1).padStart(2, "0");
+    return `<option value="${m}"${m === period.month ? " selected" : ""}>${n}</option>`;
+  }).join("");
+}
+
+$("#period-year").onchange = (e) => setPeriod(e.target.value + (period.month ? `-${period.month}` : ""));
+$("#period-month").onchange = (e) => setPeriod(period.year + (e.target.value ? `-${e.target.value}` : ""));
+$("#period-prev").onclick = () => setPeriod(shiftPeriod(-1));
+$("#period-next").onclick = () => setPeriod(shiftPeriod(1));
+
+// Whether the chart shows the months of one year or every year side by side.
+// Remembered in this browser only.
+let flowView = "months";
+try { flowView = localStorage.getItem("penny.flowView") === "years" ? "years" : "months"; } catch {}
+
+document.querySelectorAll("[data-flow-view]").forEach((btn) => btn.onclick = () => {
+  flowView = btn.dataset.flowView;
+  try { localStorage.setItem("penny.flowView", flowView); } catch {}
+  loadDashboard();
+});
+
+// Income and spending side by side, per month of the year or per year.
+// Clicking a month zooms in (again goes back to the whole year); clicking a
+// year shows that whole year.
+function drawFlowChart(rows) {
+  const byYear = flowView === "years";
+  const bars = rows.map((r) => byYear
+    ? { ...r, key: r.year, label: r.year, title: r.year, faded: r.year !== period.year }
+    : { ...r, key: r.month, label: monthLabel(r.month).split(" ")[0], title: monthLabel(r.month, "long"),
+        faded: !!period.month && r.month.slice(5) !== period.month });
+  const ongoing = (key) => key === thisMonth() || key === thisMonth().slice(0, 4);
+  const income = colorHex("--income"), spending = colorHex("--spending");
+  const o = baseChartOptions();
+  o.plugins.tooltip.displayColors = true;
+  o.plugins.tooltip.callbacks = {
+    title: (items) => { const b = bars[items[0].dataIndex]; return b.title + (ongoing(b.key) ? " (so far)" : ""); },
+    label: (c) => ` ${c.dataset.label}: ${money(c.parsed.y)}`,
+    footer: (items) => {
+      const b = bars[items[0].dataIndex];
+      const net = b.income - b.spending;
+      return `${net < 0 ? "Overspent" : "Saved"}: ${money(Math.abs(net))}`;
+    },
+  };
+  o.plugins.tooltip.footerColor = css("--text");
+  o.onClick = (_, els) => {
+    if (!els.length) return;
+    const key = bars[els[0].index].key;
+    if (byYear) setPeriod(key);
+    else setPeriod(period.month === key.slice(5) ? period.year : key);
+  };
+  o.onHover = (e, els) => (e.native.target.style.cursor = els.length ? "pointer" : "default");
+  const bar = { borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", maxBarThickness: byYear ? 48 : 22,
+                categoryPercentage: 0.7, barPercentage: 0.9 };
+  const fill = (color) => bars.map((b) => (b.faded ? color + "59" : color));
+  drawChart("chart-monthly", {
+    type: "bar",
+    data: {
+      labels: bars.map((b) => b.label),
+      datasets: [
+        { label: "Income", data: bars.map((b) => b.income), backgroundColor: fill(income), ...bar },
+        { label: "Spending", data: bars.map((b) => b.spending), backgroundColor: fill(spending), ...bar },
+      ],
+    },
+    options: o,
+  });
+}
+
+// CSS custom properties can point at other properties; Chart.js needs the final hex.
+function colorHex(name) {
+  const probe = document.createElement("span");
+  probe.style.color = `var(${name})`;
+  document.body.appendChild(probe);
+  const [r, g, b] = getComputedStyle(probe).color.match(/\d+/g).map(Number);
+  probe.remove();
+  return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+function renderBreakdown(b) {
   const pct = (v) => Math.round((v / b.total) * 100);
   const max = Math.max(...b.categories.map((c) => c.total), 1);
   $("#category-bars").innerHTML = b.categories.length
     ? b.categories.map((c) => `
-        <div class="bar-row" data-category="${esc(c.category)}" data-month="${month}" title="See transactions">
+        <div class="bar-row" data-category="${esc(c.category)}" data-month="${b.period}" title="See transactions">
           <span class="bar-label">${dot(c.category)}${esc(c.category)}</span>
           <span class="bar-value">${money(c.total)} · ${pct(c.total)}%</span>
           <div class="bar-track"><div class="bar-fill" style="width:${(c.total / max) * 100}%;background:${colorVar(c.category)}"></div></div>
         </div>`).join("")
-    : `<div class="empty">No spending this month.</div>`;
+    : `<div class="empty">No spending in ${periodLabel(b.period)}.</div>`;
+  const listRow = (m, meta) => itemHTML({
+    title: m.name, meta, amount: money(m.total), category: m.category || null, merchant: m.merchant,
+  }).replace('<div class="item">', `<div class="item clickable" data-tx-merchant="${esc(m.merchant)}" data-month="${b.period}">`);
   $("#merchant-list").innerHTML = b.merchants.length
-    ? b.merchants.map((m) => itemHTML({
-        title: m.name, meta: `${m.category} · ${m.count} ${m.count === 1 ? "charge" : "charges"}`,
-        amount: money(m.total), category: m.category, merchant: m.merchant,
-      })).join("")
-    : `<div class="empty">No spending this month.</div>`;
+    ? b.merchants.map((m) => listRow(m, `${m.category} · ${m.count} ${m.count === 1 ? "charge" : "charges"}`)).join("")
+    : `<div class="empty">No spending in ${periodLabel(b.period)}.</div>`;
+  $("#income-list").innerHTML = b.income_sources.length
+    ? b.income_sources.map((m) => listRow(m, `${m.count} ${m.count === 1 ? "deposit" : "deposits"} · ${Math.round((m.total / b.income) * 100)}% of income`)).join("")
+    : `<div class="empty">No income in ${periodLabel(b.period)}.</div>`;
   drawDonut(b);
 }
 
@@ -220,7 +320,7 @@ function drawDonut(b) {
     });
   }
   $("#donut-total").textContent = fmt0.format(b.total);
-  $("#donut-month").textContent = monthLabel(b.month, "long");
+  $("#donut-month").textContent = periodLabel(b.period);
   drawChart("chart-donut", {
     type: "doughnut",
     data: {
@@ -248,7 +348,7 @@ function drawDonut(b) {
       onClick: (_, els) => {
         const s = els.length && slices[els[0].index];
         if (s && !s.parts) {
-          txFilters = { month: b.month, category: s.label, q: "" };
+          txFilters = { month: b.period, category: s.label, q: "" };
           location.hash = "transactions";
         }
       },
@@ -257,10 +357,17 @@ function drawDonut(b) {
   });
 }
 
+$("#view-dashboard").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-tx-merchant]");
+  if (!row) return;
+  txFilters = { month: row.dataset.month, category: "", q: row.dataset.txMerchant };
+  location.hash = "transactions";
+});
+
 // One row in a list. `amount`, `extra` and `actions` are HTML; the rest is text.
-function itemHTML({ title, meta = "", amount = "", amountMeta = "", extra = "", category = null, merchant = null, actions = "" }) {
+function itemHTML({ title, meta = "", amount = "", amountMeta = "", extra = "", category = null, merchant = null, actions = "", icon = true }) {
   return `<div class="item">
-    ${avatar(merchant, title)}
+    ${icon ? avatar(merchant, title) : ""}
     <div class="main"><div class="title">${esc(title)}${extra}</div><div class="meta">${category ? dot(category) : ""}${esc(meta)}</div></div>
     <div class="amount">${amount}${amountMeta ? `<div class="meta">${esc(amountMeta)}</div>` : ""}</div>
     ${actions}
@@ -324,10 +431,12 @@ let searchTimer;
 
 async function loadTransactions() {
   const monthSel = $("#tx-month"), catSel = $("#tx-category");
-  if (monthSel.options.length <= 1) {
-    const months = await api("/api/spending/monthly?months=24");
-    monthSel.innerHTML += [...months].reverse().map((m) => `<option value="${m.month}">${monthLabel(m.month, "long")}</option>`).join("");
-  }
+  // Rebuilt every time, since imports and syncs can add months.
+  const p = await api("/api/periods");
+  monthSel.innerHTML = `<option value="">All dates</option>` + p.years.map((y) =>
+    `<optgroup label="${y}"><option value="${y}">All of ${y}</option>` +
+    p.months.filter((m) => m.startsWith(y)).map((m) => `<option value="${m}">${monthLabel(m, "long")}</option>`).join("") +
+    `</optgroup>`).join("");
   // Rebuilt every time, since categories can be added or deleted.
   catSel.innerHTML = `<option value="">All categories</option>` +
     categoryNames().map((c) => `<option>${esc(c)}</option>`).join("");
@@ -343,7 +452,7 @@ async function loadTransactions() {
     ? rows.map((t) => `<tr>
         <td>${dayLabel(t.date)}</td>
         <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<div class="meta">${esc(t.description)}</div></div></div></td>
-        <td class="cat">${dot(t.category)}<select data-merchant="${esc(t.merchant)}" aria-label="Category">${catOptions(t.category)}</select></td>
+        <td class="cat">${dot(t.category)}<select data-merchant="${esc(t.merchant)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}" title="Set by a rule for descriptions containing “${esc(t.description_rule)}”"` : ""} aria-label="Category">${catOptions(t.category)}</select></td>
         <td class="muted">${esc(t.account_name)}</td>
         <td class="num ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</td>
       </tr>`).join("")
@@ -358,7 +467,13 @@ $("#tx-search").oninput = (e) => {
 };
 $("#tx-body").addEventListener("change", async (e) => {
   if (!e.target.matches("select[data-merchant]")) return;
-  await api("/api/merchant-rules", { method: "PUT", body: { merchant: e.target.dataset.merchant, category: e.target.value } });
+  const { merchant, pattern } = e.target.dataset;
+  // A row set by a description rule changes that rule, not the whole merchant.
+  if (pattern) {
+    await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category: e.target.value } });
+  } else {
+    await api("/api/merchant-rules", { method: "PUT", body: { merchant, category: e.target.value } });
+  }
   loadTransactions();
 });
 
@@ -368,7 +483,8 @@ let merchantRows = [];
 let logoTarget = null;  // merchant whose picture is being picked
 
 async function loadMerchants() {
-  [merchantRows] = await Promise.all([api("/api/merchants"), refreshLogos()]);
+  [merchantRows] = await Promise.all([api("/api/merchants"), refreshLogos(),
+    ...[...openDescriptions].map(loadDescriptions)]);
   renderMerchants();
 }
 
@@ -386,11 +502,16 @@ function renderMerchants() {
     const options = `<option value="">Automatic (${esc(m.auto_category)})</option>` +
       categoryNames().map((c) => `<option value="${esc(c)}"${c === m.rule_category ? " selected" : ""}>${esc(c)}</option>`).join("");
     const hasLogo = !!logos[m.merchant];
+    const open = openDescriptions.has(m.merchant);
+    const descTag = m.description_rules
+      ? `<span class="rule-tag">${m.description_rules} description ${m.description_rules === 1 ? "rule" : "rules"}</span>` : "";
+    const descToggle = m.variants > 1 || m.description_rules
+      ? ` · <button class="link-btn" data-desc-toggle="${key}" aria-expanded="${open}">${open ? "Hide" : "Descriptions"} (${m.variants})</button>` : "";
     return `<div class="item merchant-row">
       <button class="avatar-btn" data-logo-pick="${key}" title="${hasLogo ? "Change" : "Add"} picture for ${esc(m.name)}">${avatar(m.merchant, m.name)}</button>
       <div class="main">
-        <div class="title">${esc(m.name)}${m.rule_category ? '<span class="rule-tag">Rule</span>' : ""}</div>
-        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}</div>
+        <div class="title">${esc(m.name)}${m.rule_category ? '<span class="rule-tag">Rule</span>' : ""}${descTag}</div>
+        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}${descToggle}</div>
         <div class="meta example">${esc(m.example)}</div>
       </div>
       <div class="m-controls">
@@ -400,9 +521,86 @@ function renderMerchants() {
           ${hasLogo ? `<button class="link-btn" data-logo-remove="${key}">Remove</button>` : ""}
         </div>
       </div>
-    </div>`;
+    </div>${open ? `<div class="m-descriptions" data-desc-panel="${key}">${descriptionPanel(m)}</div>` : ""}`;
   }).join("") : `<div class="empty">No merchants match.</div>`;
 }
+
+// ---------- a merchant's descriptions & description rules ----------
+
+const openDescriptions = new Set();   // merchants whose descriptions are showing
+const descriptionData = new Map();    // merchant -> /api/merchant-descriptions result
+
+async function loadDescriptions(merchant) {
+  descriptionData.set(merchant, await api(`/api/merchant-descriptions?merchant=${encodeURIComponent(merchant)}`));
+}
+
+// Each different description (numbers ignored) gets its own category choice.
+// Choosing one saves a rule for descriptions like that one, which wins over
+// the merchant's own category. Broader rules ("contains cashout") can be added below.
+function descriptionPanel(m) {
+  const data = descriptionData.get(m.merchant);
+  if (!data) return `<div class="empty">Loading…</div>`;
+  const merchantCategory = m.rule_category || m.auto_category;
+  const key = esc(m.merchant);
+  const options = (selected) => categoryNames().map((c) => `<option value="${esc(c)}"${c === selected ? " selected" : ""}>${esc(c)}</option>`).join("");
+  const rows = data.descriptions.map((d) => {
+    const own = d.rule === d.key;
+    const fallback = d.rule && !own ? `Rule “${d.rule}” (${d.category})` : `Same as merchant (${merchantCategory})`;
+    return `<div class="desc-row">
+      <div>
+        <div class="desc-text">${dot(d.category)}${esc(d.example)}</div>
+        <div class="meta">${d.count} ${d.count === 1 ? "transaction" : "transactions"} · ${money(d.total)} · last ${dayLabel(d.last_date)}</div>
+      </div>
+      <select data-desc-merchant="${key}" data-desc-key="${esc(d.key)}" aria-label="Category for this description">
+        <option value="">${esc(fallback)}</option>${options(own ? d.category : null)}
+      </select>
+    </div>`;
+  }).join("");
+  const exact = new Set(data.descriptions.map((d) => d.key));
+  const broad = data.rules.filter((r) => !exact.has(r.pattern));
+  const broadRows = broad.map((r) => `<div class="desc-row">
+      <div class="desc-text">${dot(r.category)}Descriptions containing <span class="rule-pattern">${esc(r.pattern)}</span> → ${esc(r.category)}</div>
+      <button class="link-btn danger-link" data-desc-remove="${key}" data-pattern="${esc(r.pattern)}">Remove</button>
+    </div>`).join("");
+  return `${rows}${broadRows}
+    <form class="row" data-desc-add="${key}">
+      <input name="pattern" placeholder="Description contains… (e.g. cashout)" aria-label="Description contains" required>
+      <select name="category" aria-label="Category">${options(null)}</select>
+      <button class="btn small">Add rule</button>
+    </form>
+    <p class="msg" data-desc-msg="${key}"></p>`;
+}
+
+async function refreshDescriptions(merchant) {
+  await Promise.all([loadDescriptions(merchant), api("/api/merchants").then((rows) => { merchantRows = rows; })]);
+  renderMerchants();
+}
+
+$("#merchant-rows").addEventListener("change", async (e) => {
+  const sel = e.target.closest("select[data-desc-key]");
+  if (!sel) return;
+  const merchant = sel.dataset.descMerchant, pattern = sel.dataset.descKey;
+  if (sel.value) {
+    await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category: sel.value } });
+  } else {
+    await api(`/api/description-rules?merchant=${encodeURIComponent(merchant)}&pattern=${encodeURIComponent(pattern)}`, { method: "DELETE" });
+  }
+  refreshDescriptions(merchant);
+});
+
+$("#merchant-rows").addEventListener("submit", async (e) => {
+  const form = e.target.closest("form[data-desc-add]");
+  if (!form) return;
+  e.preventDefault();
+  const merchant = form.dataset.descAdd;
+  try {
+    await api("/api/description-rules", { method: "PUT", body: { merchant, pattern: form.pattern.value, category: form.category.value } });
+    refreshDescriptions(merchant);
+  } catch (err) {
+    const msg = [...document.querySelectorAll("[data-desc-msg]")].find((p) => p.dataset.descMsg === merchant);
+    if (msg) { msg.className = "msg error"; msg.textContent = err.message; }
+  }
+});
 
 $("#m-search").oninput = renderMerchants;
 $("#m-filter").onchange = renderMerchants;
@@ -422,7 +620,20 @@ $("#merchant-rows").addEventListener("change", async (e) => {
 $("#merchant-rows").addEventListener("click", async (e) => {
   const pick = e.target.closest("[data-logo-pick]");
   const remove = e.target.closest("[data-logo-remove]");
-  if (pick) {
+  const toggle = e.target.closest("[data-desc-toggle]");
+  const removeRule = e.target.closest("[data-desc-remove]");
+  if (toggle) {
+    const merchant = toggle.dataset.descToggle;
+    if (openDescriptions.delete(merchant)) return renderMerchants();
+    openDescriptions.add(merchant);
+    renderMerchants();
+    await loadDescriptions(merchant);
+    renderMerchants();
+  } else if (removeRule) {
+    const merchant = removeRule.dataset.descRemove;
+    await api(`/api/description-rules?merchant=${encodeURIComponent(merchant)}&pattern=${encodeURIComponent(removeRule.dataset.pattern)}`, { method: "DELETE" });
+    refreshDescriptions(merchant);
+  } else if (pick) {
     logoTarget = pick.dataset.logoPick;
     $("#logo-input").value = "";
     $("#logo-input").click();
@@ -515,7 +726,7 @@ async function loadImport() {
   $("#imp-new-account").hidden = sel.value !== "__new";
 
   $("#imp-history").innerHTML = history.length ? `<h3>Imported so far</h3>` + history.map((h) => itemHTML({
-    title: h.name, meta: `${h.count} imported transactions · ${dayLabel(h.first_date)} to ${dayLabel(h.last_date)}`,
+    title: h.name, meta: `${h.count} imported transactions · ${rangeLabel(h.first_date, h.last_date)}`,
     actions: `<button class="link-btn danger-link" data-undo-import="${esc(h.id)}" data-manual="${h.manual}">Remove</button>`,
   })).join("") : "";
 }
@@ -535,6 +746,7 @@ $("#imp-file").onchange = async (e) => {
     return;
   }
   imp.fromPdf = pdfs.length > 0;
+  imp.fileName = imp.fromPdf ? null : files[0].name;
   if (!imp.fromPdf) {
     imp.text = await files[0].text();
     imp.mapping = null;
@@ -625,7 +837,7 @@ function renderPreview(p) {
     return;
   }
   summary.className = "msg";
-  let text = `${p.count} transactions from ${dayLabel(p.first_date)} to ${dayLabel(p.last_date)}.`;
+  let text = `${p.count} transactions from ${rangeLabel(p.first_date, p.last_date)}.`;
   if (p.error_count) {
     text += ` ${p.error_count} ${p.error_count === 1 ? "row" : "rows"} couldn't be read and will be skipped` +
       ` (for example row ${p.errors[0].row}: "${p.errors[0].text}").`;
@@ -664,7 +876,7 @@ $("#imp-mapping").addEventListener("change", (e) => {
 $("#imp-go").onclick = async () => {
   const go = $("#imp-go"), msg = $("#imp-msg");
   const account = $("#imp-account").value;
-  const body = { csv: imp.text, mapping: imp.mapping };
+  const body = { csv: imp.text, mapping: imp.mapping, file_name: imp.fileName };
   if (account === "__new") {
     body.new_account = {
       name: $("#imp-new-name").value, org_name: $("#imp-new-org").value,
@@ -767,6 +979,72 @@ $("#delete-category-form").onsubmit = async (e) => {
   loadCategories();
 };
 
+// ---------- your data & backups (in Settings) ----------
+
+const BACKUP_REASONS = {
+  daily: "Daily backup", manual: "Made by you", "before-delete": "Before deleting data",
+  "before-restore": "Before a restore", "before-undo-import": "Before removing an import",
+  "before-category-delete": "Before deleting a category",
+};
+
+async function loadData() {
+  const d = await api("/api/data");
+  $("#data-summary").innerHTML = d.transactions
+    ? `<b>${d.transactions.toLocaleString()} transactions</b> from ${rangeLabel(d.first_date, d.last_date)} ` +
+      `in ${d.accounts} ${d.accounts === 1 ? "account" : "accounts"}, saved on this Mac. ` +
+      `Transactions stay in Penny after they're older than what SimpleFIN provides.`
+    : "No transactions yet.";
+  const o = d.originals, parts = [];
+  if (o.simplefin) parts.push(`${o.simplefin} SimpleFIN ${o.simplefin === 1 ? "download" : "downloads"}`);
+  if (o.pdf) parts.push(`${o.pdf} PDF ${o.pdf === 1 ? "statement" : "statements"}`);
+  if (o.csv) parts.push(`${o.csv} CSV ${o.csv === 1 ? "file" : "files"}`);
+  $("#data-originals").textContent = parts.length
+    ? `Originals kept inside Penny's database, exactly as received: ${parts.join(", ")}.` : "";
+  $("#demo-btn").hidden = d.real_data;
+
+  const last = d.backups[0];
+  $("#backup-summary").textContent = d.real_data
+    ? `${last ? `Last backup ${backupTime(last)}. ` : ""}Penny backs up once a day and before anything destructive, ` +
+      `keeping 14 daily and 12 monthly copies in ${d.backup_dir}.`
+    : "Backups start once you connect a bank or import transactions.";
+  $("#backup-list").innerHTML = d.backups.length ? d.backups.map((b) => itemHTML({
+    title: backupTime(b), meta: `${BACKUP_REASONS[b.reason] || b.reason} · ${Math.max(1, Math.round(b.bytes / 1024))} KB`,
+    actions: `<button class="link-btn" data-restore="${esc(b.name)}">Restore</button>`, icon: false,
+  })).join("") : `<div class="empty">No backups yet.</div>`;
+}
+
+function backupTime(b) {
+  const d = new Date(`${b.day}T${b.time.slice(0, 2)}:${b.time.slice(2, 4)}:00`);
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+$("#backup-now").onclick = async () => {
+  const msg = $("#data-msg");
+  try {
+    await api("/api/backups", { method: "POST" });
+    msg.className = "msg"; msg.textContent = "Backed up.";
+    loadData();
+  } catch (err) {
+    msg.className = "msg error"; msg.textContent = err.message;
+  }
+};
+$("#backup-reveal").onclick = () => api("/api/backups/reveal", { method: "POST" });
+
+$("#backup-list").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-restore]");
+  if (!btn) return;
+  if (!confirm("Restore this backup? Penny's data goes back to how it was then. The current data is backed up first, so you can switch back.")) return;
+  const msg = $("#data-msg");
+  try {
+    await api("/api/backups/restore", { method: "POST", body: { name: btn.dataset.restore } });
+    msg.className = "msg"; msg.textContent = "Restored.";
+    await Promise.all([refreshStatus(), refreshCategories(), refreshLogos()]);
+    route();
+  } catch (err) {
+    msg.className = "msg error"; msg.textContent = err.message;
+  }
+});
+
 // ---------- settings & actions ----------
 
 // msg is the status line to report into, or null to use alerts.
@@ -777,10 +1055,18 @@ async function runAction(action, msg) {
     msg.textContent = text;
   };
   try {
-    if (action === "disconnect" && !confirm("Disconnect SimpleFIN and delete all synced data from this computer?")) return;
-    show({ sync: "Syncing…", demo: "Loading demo data…", disconnect: "Deleting…" }[action]);
+    const confirmations = {
+      disconnect: "Disconnect SimpleFIN? Everything already downloaded stays in Penny. You can reconnect anytime with a new setup token.",
+      "delete-all-data": "Delete all accounts, transactions and saved originals from Penny? A backup is made first, so this can be undone from Settings → Restore a backup.",
+    };
+    if (confirmations[action] && !confirm(confirmations[action])) return;
+    show({ sync: "Syncing…", demo: "Loading demo data…", disconnect: "Disconnecting…", "delete-all-data": "Deleting…" }[action]);
     const res = await api(`/api/${action}`, { method: "POST" });
-    show(action === "sync" ? syncSummary(res) : "Done.");
+    show({
+      sync: () => syncSummary(res),
+      disconnect: () => "Disconnected. Your data is still here.",
+      "delete-all-data": () => `Deleted. A backup was saved first in ${res.backup_dir}.`,
+    }[action]?.() ?? "Done.");
     await refreshStatus();
     if (action === "demo") location.hash = "dashboard";
     await route();

@@ -1,9 +1,12 @@
 """SQLite storage. Everything lives in data/penny.db on your machine."""
+import gzip
+import hashlib
 import os
 import sqlite3
+import time
 from pathlib import Path
 
-from .categorize import DEFAULT_CATEGORIES, DEFAULT_COLOR_SLOTS
+from .categorize import DEFAULT_CATEGORIES, DEFAULT_COLOR_SLOTS, description_key
 
 DATA_DIR = Path(os.environ.get("PENNY_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "penny.db"
@@ -49,6 +52,16 @@ CREATE TABLE IF NOT EXISTS merchant_rules (
     category TEXT NOT NULL
 );
 
+-- Rules for some of a merchant's transactions: those whose description
+-- contains `pattern` (compared via description_key, so digits don't count).
+-- They win over the merchant's rule; the longest matching pattern wins.
+CREATE TABLE IF NOT EXISTS description_rules (
+    merchant TEXT NOT NULL,
+    pattern  TEXT NOT NULL,
+    category TEXT NOT NULL,
+    PRIMARY KEY (merchant, pattern)
+);
+
 -- Profile pictures for merchants, resized in the browser before upload.
 CREATE TABLE IF NOT EXISTS merchant_logos (
     merchant TEXT PRIMARY KEY,
@@ -77,6 +90,16 @@ CREATE TABLE IF NOT EXISTS category_aliases (
     new_name TEXT NOT NULL
 );
 
+-- Every raw download from SimpleFIN and every imported file, kept as
+-- received (gzipped) so transactions can be rebuilt if anything goes wrong.
+CREATE TABLE IF NOT EXISTS raw_archive (
+    sha256      TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,              -- 'simplefin', 'csv' or 'pdf'
+    name        TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    data        BLOB NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -91,6 +114,7 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.create_function("desc_key", 1, description_key, deterministic=True)
     conn.executescript(SCHEMA)
     # Databases created before affects_balance existed need the column added.
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
@@ -141,3 +165,10 @@ def clear_financial_data(conn):
         conn.execute(f"DELETE FROM {table}")
     set_setting(conn, "last_sync", None)
     set_setting(conn, "mode", None)
+
+
+def archive(conn, kind: str, name: str, data: bytes):
+    """Keep an original download or file. Identical content is stored once."""
+    conn.execute(
+        "INSERT OR IGNORE INTO raw_archive (sha256, kind, name, received_at, data) VALUES (?, ?, ?, ?, ?)",
+        (hashlib.sha256(data).hexdigest(), kind, name, int(time.time()), gzip.compress(data)))

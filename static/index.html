@@ -38,22 +38,43 @@
     </section>
 
     <section id="view-dashboard" class="view" hidden>
-      <div class="tiles">
-        <div class="tile"><div class="label">Net worth</div><div class="value" id="t-networth"></div></div>
-        <div class="tile"><div class="label">Spent this month</div><div class="value" id="t-spent"></div><div class="sub" id="t-spent-sub"></div></div>
-        <div class="tile"><div class="label">Subscriptions &amp; bills</div><div class="value" id="t-subs"></div><div class="sub">per month</div></div>
+      <div class="period-bar">
+        <h1 id="period-title"></h1>
+        <div class="period-controls">
+          <button class="btn secondary small" id="period-prev" aria-label="Previous period">‹</button>
+          <select id="period-year" aria-label="Year"></select>
+          <select id="period-month" aria-label="Month"></select>
+          <button class="btn secondary small" id="period-next" aria-label="Next period">›</button>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><h2>Monthly spending</h2><span class="muted">Excludes transfers between your accounts</span></div>
-        <div class="chart-box"><canvas id="chart-monthly" aria-label="Monthly spending bar chart"></canvas></div>
+      <div class="tiles four">
+        <div class="tile"><div class="label">Income</div><div class="value" id="t-income"></div><div class="sub" id="t-income-sub"></div></div>
+        <div class="tile"><div class="label">Spending</div><div class="value" id="t-spent"></div><div class="sub" id="t-spent-sub"></div></div>
+        <div class="tile"><div class="label">Saved</div><div class="value" id="t-saved"></div><div class="sub" id="t-saved-sub"></div></div>
+        <div class="tile"><div class="label">Net worth today</div><div class="value" id="t-networth"></div><div class="sub" id="t-subs"></div></div>
       </div>
 
       <div class="card">
         <div class="card-head">
-          <h2>Where it went</h2>
-          <select id="breakdown-month" aria-label="Month"></select>
+          <h2 id="flow-title">Income &amp; spending</h2>
+          <div class="flow-tools">
+            <div class="legend" aria-hidden="true">
+              <span><i class="swatch income"></i>Income</span>
+              <span><i class="swatch spending"></i>Spending</span>
+            </div>
+            <div class="segmented" role="group" aria-label="Show the chart by">
+              <button type="button" data-flow-view="months" aria-pressed="true">Months</button>
+              <button type="button" data-flow-view="years" aria-pressed="false">Years</button>
+            </div>
+          </div>
         </div>
+        <div class="chart-box"><canvas id="chart-monthly" aria-label="Income and spending bar chart"></canvas></div>
+        <p class="muted hint" id="flow-hint"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Where it went</h2><span class="muted" id="went-period"></span></div>
         <div class="breakdown">
           <div class="donut-box">
             <canvas id="chart-donut" aria-label="Spending by category donut chart"></canvas>
@@ -68,13 +89,18 @@
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-head"><h2>Top merchants</h2></div>
-          <div id="merchant-list" class="list"></div>
+          <div class="card-head"><h2>Where it came from</h2><span class="muted" id="came-period"></span></div>
+          <div id="income-list" class="list"></div>
         </div>
         <div class="card">
-          <div class="card-head"><h2>Coming up</h2><span class="muted">Next 30 days</span></div>
-          <div id="upcoming" class="list"></div>
+          <div class="card-head"><h2>Top merchants</h2><span class="muted" id="merchants-period"></span></div>
+          <div id="merchant-list" class="list"></div>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Coming up</h2><span class="muted">Next 30 days</span></div>
+        <div id="upcoming" class="list"></div>
       </div>
     </section>
 
@@ -105,7 +131,7 @@
           <select id="tx-month" aria-label="Month"><option value="">All months</option></select>
           <select id="tx-category" aria-label="Category"><option value="">All categories</option></select>
         </div>
-        <p class="muted hint">Changing a category applies to every transaction from that merchant.</p>
+        <p class="muted hint">Changing a category applies to every transaction from that merchant. To treat some of a merchant's descriptions differently, open <a href="#merchants">Merchants</a> and choose <b>Descriptions</b>.</p>
         <div class="table-wrap">
           <table class="tx">
             <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
@@ -223,13 +249,30 @@
         <p id="category-msg" class="msg"></p>
         <div id="category-rows" class="cat-list"></div>
       </div>
-      <div class="card">
-        <h2>Data</h2>
+      <div class="card" id="data-card">
+        <h2>Your data</h2>
+        <p id="data-summary"></p>
+        <p class="muted" id="data-originals"></p>
+
+        <h3>Backups</h3>
+        <p class="muted" id="backup-summary"></p>
+        <div class="row">
+          <button class="btn secondary" id="backup-now">Back up now</button>
+          <button class="btn secondary" id="backup-reveal">Show in Finder</button>
+        </div>
+        <details id="backup-details">
+          <summary>Restore a backup</summary>
+          <div id="backup-list" class="list"></div>
+        </details>
+
+        <h3>Connection</h3>
         <div class="row">
           <button class="btn secondary" data-action="sync">Sync now</button>
-          <button class="btn secondary" data-action="demo">Load demo data</button>
-          <button class="btn danger" data-action="disconnect">Disconnect &amp; delete all data</button>
+          <button class="btn secondary" data-action="demo" id="demo-btn">Load demo data</button>
+          <button class="btn secondary" data-action="disconnect">Disconnect SimpleFIN</button>
+          <button class="btn danger" data-action="delete-all-data">Delete all data</button>
         </div>
+        <p class="muted hint">Disconnecting keeps everything already downloaded. Deleting makes a backup first.</p>
         <p id="data-msg" class="msg"></p>
       </div>
       <div class="card">

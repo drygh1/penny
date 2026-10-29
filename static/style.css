@@ -19,6 +19,8 @@
   --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
   --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948;
   --series-other: #a3a29b;
+  --income: var(--series-3);
+  --spending: var(--series-1);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -108,6 +110,27 @@ main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; grid-tem
 
 .chart-box { position: relative; height: 260px; }
 
+/* Period picker */
+.period-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.period-controls { display: flex; gap: 8px; align-items: center; }
+.period-controls .btn.small { padding: 6px 12px; font-size: 16px; line-height: 1; }
+.tiles.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--text-2); }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.flow-tools { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.segmented { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+.segmented button {
+  font: inherit; font-size: 13px; padding: 4px 12px; border: 0; cursor: pointer;
+  background: transparent; color: var(--text-2);
+}
+.segmented button + button { border-left: 1px solid var(--axis); }
+.segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.swatch.income { background: var(--income); }
+.swatch.spending { background: var(--spending); }
+.positive-text { color: var(--good); }
+.negative-text { color: var(--critical); }
+
 /* Category bars */
 .bars { display: grid; gap: 12px; }
 .bar-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; cursor: pointer; }
@@ -164,6 +187,19 @@ main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; grid-tem
 .m-category { display: flex; align-items: center; }
 .m-category select { width: 220px; }
 .m-photo { display: flex; gap: 4px; }
+
+/* A merchant's descriptions, opened from its row */
+.m-descriptions { margin: 0 0 12px 56px; padding: 4px 0 0; }
+.m-descriptions .desc-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.m-descriptions .desc-text { font-size: 13px; overflow-wrap: anywhere; }
+.m-descriptions .desc-row .meta { color: var(--muted); font-size: 12px; }
+.m-descriptions select { width: 220px; font-size: 13px; padding: 4px 6px; }
+.m-descriptions form { margin-top: 10px; }
+.m-descriptions form input { flex: 1; min-width: 180px; }
+.rule-pattern { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .tx-merchant { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .badge {
@@ -199,7 +235,9 @@ input, select {
 /* CSV import */
 h3 { font-size: 14px; font-weight: 600; margin: 20px 0 10px; }
 .import-grid, .map-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
-.import-grid label, .map-grid label { display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
+.import-grid label, .map-grid label { display: grid; gap: 4px; font-size: 13px; color: var(--text-2); min-width: 0; }
+/* Options quote sample values, which can be long bank descriptions; keep the selects inside the card. */
+.import-grid select, .map-grid select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 .import-grid input[type="file"] { padding: 6px; }
 .check { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; color: var(--text); }
 #imp-history { margin-top: 8px; }
@@ -238,18 +276,26 @@ dialog select { width: 100%; }
 table.tx { width: 100%; border-collapse: collapse; }
 .tx th { text-align: left; font-size: 13px; font-weight: 500; color: var(--muted); padding: 8px; border-bottom: 1px solid var(--axis); }
 .tx td { padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-.tx td.desc { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
-.tx td.desc .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+/* The full bank description wraps, so every word of it can be read. */
+.tx td.desc { min-width: 260px; max-width: 460px; white-space: normal; }
+.tx td.desc .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin-top: 2px; }
+.tx td.desc .tx-merchant { align-items: flex-start; }
 .tx select { padding: 4px 6px; font-size: 13px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .positive { color: var(--good); }
 .pending { color: var(--muted); font-size: 12px; margin-left: 4px; }
 
+@media (max-width: 1000px) {
+  .tiles.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 16px; }
   nav { order: 3; width: 100%; }
   main { padding: 16px; gap: 16px; }
-  .tiles { grid-template-columns: 1fr; gap: 12px; }
+  .tiles, .tiles.four { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .period-controls { width: 100%; }
+  .period-controls select { flex: 1; }
   .grid-2 { grid-template-columns: minmax(0, 1fr); }
   .breakdown { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .donut-box { height: 240px; }
@@ -259,5 +305,16 @@ table.tx { width: 100%; border-collapse: collapse; }
   .merchant-row .main { flex-basis: calc(100% - 60px); }
   .m-controls { width: 100%; justify-items: start; padding-left: 56px; }
   .m-category select { width: 100%; }
+  .m-descriptions { margin-left: 0; }
+  .m-descriptions .desc-row { grid-template-columns: minmax(0, 1fr); }
+  .m-descriptions select { width: 100%; }
   .m-category { width: 100%; }
 }
+
+.item.clickable { cursor: pointer; }
+.item.clickable:hover .title { text-decoration: underline; }
+
+/* Your data */
+#data-card h3 { margin-top: 24px; }
+#backup-details { margin-top: 12px; }
+#backup-details summary { cursor: pointer; color: var(--accent); font-size: 14px; }

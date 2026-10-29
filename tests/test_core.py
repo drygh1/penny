@@ -48,3 +48,13 @@ def test_yearly_needs_only_two_charges():
     txs = [tx("nytimes", TODAY - timedelta(days=d), -139) for d in (370, 5)]
     [s] = detect(txs, TODAY)
     assert s.cadence == "yearly" and round(s.monthly_cost, 2) == 11.58
+
+
+def test_page_always_loads_current_code():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    c = TestClient(app, base_url="http://127.0.0.1:8000")
+    page = c.get("/")
+    assert page.headers["cache-control"] == "no-cache"
+    assert "/static/app.js?v=" in page.text and "/static/style.css?v=" in page.text
+    assert c.get("/static/app.js").headers["cache-control"] == "no-cache"

@@ -4,11 +4,13 @@ Every endpoint under /api returns JSON, so a future iPhone app can talk to
 this same server.
 """
 import base64
+import hashlib
 import binascii
 import csv
 import io
 import os
 import signal
+import subprocess
 import time
 from urllib.parse import urlsplit
 import uuid
@@ -21,9 +23,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, demo, importer, pdf_statements, simplefin, subscriptions
-from .categorize import COLOR_SLOTS, LOCKED_CATEGORIES, NON_SPENDING, categorize, display_name, normalize_merchant
-from .sync import recategorize_all, snapshot_balances, sync, upsert_account, upsert_transaction
+from . import backup, db, demo, importer, pdf_statements, simplefin, subscriptions
+from .categorize import (COLOR_SLOTS, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
+                         normalize_merchant)
+from .sync import (match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
+                   upsert_transaction)
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 @asynccontextmanager
@@ -31,7 +35,8 @@ async def lifespan(app):
     # Apply any keyword improvements to transactions synced before them.
     conn = db.connect()
     try:
-        recategorize_all(conn)
+        refresh_categories(conn)
+        backup_if_real(conn)
     finally:
         conn.close()
     yield
@@ -55,16 +60,24 @@ async def only_local_pages(request: Request, call_next):
     origin = request.headers.get("origin")
     if request.method not in ("GET", "HEAD") and origin and urlsplit(origin).hostname not in LOCAL_HOSTS:
         return JSONResponse({"detail": "Forbidden origin"}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers.update(NO_CACHE)
+    return response
 
 TX_SELECT = """
     SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.merchant, t.pending,
-           COALESCE(r.category, t.category) AS category,
+           COALESCE(d.category, r.category, t.category) AS category,
+           d.pattern AS description_rule,
            strftime('%Y-%m', t.posted, 'unixepoch', 'localtime') AS month,
            a.name AS account_name
     FROM transactions t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN merchant_rules r ON r.merchant = t.merchant
+    LEFT JOIN description_rules d ON d.merchant = t.merchant AND d.pattern = (
+        SELECT d2.pattern FROM description_rules d2
+        WHERE d2.merchant = t.merchant AND instr(desc_key(t.description), d2.pattern) > 0
+        ORDER BY length(d2.pattern) DESC LIMIT 1)
 """
 SPENDING_FILTER = "category NOT IN ({})".format(",".join(f"'{c}'" for c in NON_SPENDING))
 
@@ -113,27 +126,104 @@ def connect_simplefin(body: ConnectBody, conn=Depends(get_conn)):
 @app.post("/api/sync")
 def run_sync(conn=Depends(get_conn)):
     try:
-        return sync(conn)
+        result = sync(conn)
     except Exception as e:
         fail(e)
+    backup_if_real(conn)
+    return result
+
+
+def has_real_data(conn) -> bool:
+    return db.get_setting(conn, "mode") in ("simplefin", "manual")
+
+
+def backup_if_real(conn, reason: str | None = None):
+    """Daily backup (or a safety backup before something destructive). Skipped for demo data."""
+    if not has_real_data(conn):
+        return
+    try:
+        backup.create(conn, reason) if reason else backup.daily_if_needed(conn)
+    except OSError as e:
+        print(f"Backup failed: {e}")
+        if reason:  # never do something destructive without its safety backup
+            fail(Exception(f"Couldn't make a safety backup first ({e}), so nothing was changed."))
 
 
 @app.post("/api/demo")
 def load_demo(conn=Depends(get_conn)):
     if db.get_setting(conn, "simplefin_access_url"):
         fail(Exception("Disconnect SimpleFIN before loading demo data."))
-    if db.get_setting(conn, "mode") == "manual":
-        fail(Exception("Loading demo data would replace your imported transactions. Remove your imports first."))
+    if has_real_data(conn):
+        fail(Exception("Loading demo data would replace your real transactions. Delete your data first."))
     demo.load(conn)
     return {"ok": True}
 
 
 @app.post("/api/disconnect")
 def disconnect(conn=Depends(get_conn)):
-    """Forget the SimpleFIN connection and delete all synced data."""
+    """Forget the SimpleFIN connection. Everything already downloaded is kept."""
+    with conn:
+        db.set_setting(conn, "simplefin_access_url", None)
+    return {"ok": True}
+
+
+@app.post("/api/delete-all-data")
+def delete_all_data(conn=Depends(get_conn)):
+    """Delete accounts, transactions, originals and the SimpleFIN connection.
+
+    A safety backup is taken first. Categories, rules and pictures are kept.
+    """
+    backup_if_real(conn, "before-delete")
     with conn:
         db.clear_financial_data(conn)
+        conn.execute("DELETE FROM raw_archive")
         db.set_setting(conn, "simplefin_access_url", None)
+    return {"ok": True, "backup_dir": str(backup.BACKUP_DIR)}
+
+
+# ---------- your data & backups ----------
+
+@app.get("/api/data")
+def data_summary(conn=Depends(get_conn)):
+    tx = conn.execute("""SELECT COUNT(*) AS n, date(MIN(posted), 'unixepoch', 'localtime') AS first,
+                                date(MAX(posted), 'unixepoch', 'localtime') AS last FROM transactions""").fetchone()
+    originals = dict(conn.execute("SELECT kind, COUNT(*) FROM raw_archive GROUP BY kind").fetchall())
+    backups = backup.list_backups()
+    return {
+        "transactions": tx["n"], "first_date": tx["first"], "last_date": tx["last"],
+        "accounts": conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0],
+        "originals": originals,
+        "backup_dir": str(backup.BACKUP_DIR).replace(str(Path.home()), "~"),
+        "backups": backups[:15],
+        "backup_count": len(backups),
+        "real_data": has_real_data(conn),
+    }
+
+
+@app.post("/api/backups")
+def make_backup(conn=Depends(get_conn)):
+    path = backup.create(conn, "manual")
+    return {"ok": True, "name": path.name}
+
+
+class RestoreBody(BaseModel):
+    name: str
+
+
+@app.post("/api/backups/restore")
+def restore_backup(body: RestoreBody, conn=Depends(get_conn)):
+    try:
+        backup.restore(conn, body.name)
+    except ValueError as e:
+        fail(e)
+    return {"ok": True}
+
+
+@app.post("/api/backups/reveal")
+def reveal_backups():
+    """Open the backups folder in Finder."""
+    backup.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["open", str(backup.BACKUP_DIR)], check=False)
     return {"ok": True}
 
 
@@ -238,6 +328,7 @@ def add_category(body: CategoryBody, conn=Depends(get_conn)):
 @app.delete("/api/categories")
 def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
     """Delete a category, moving its transactions and merchant rules to `move_to`."""
+    backup_if_real(conn, "before-category-delete")
     names = db.category_names(conn)
     if name not in names:
         fail(Exception(f"Unknown category: {name}"))
@@ -248,6 +339,7 @@ def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
     with conn:
         conn.execute("UPDATE transactions SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE merchant_rules SET category = ? WHERE category = ?", (move_to, name))
+        conn.execute("UPDATE description_rules SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (move_to, name))
         conn.execute(
             "INSERT INTO category_aliases (old_name, new_name) VALUES (?, ?) "
@@ -256,32 +348,80 @@ def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
     return {"ok": True}
 
 
+def period_filter(period: str) -> tuple[str, list]:
+    """SQL for a period: a year ("2026") or a month ("2026-10")."""
+    if len(period) == 4 and period.isdigit():
+        return "month LIKE ?", [f"{period}-%"]
+    if len(period) == 7 and period[:4].isdigit() and period[4] == "-" and period[5:].isdigit():
+        return "month = ?", [period]
+    fail(Exception(f"Unknown period: {period}"))
+
+
+@app.get("/api/periods")
+def periods(conn=Depends(get_conn)):
+    """Years and months that have transactions, newest first."""
+    months = [r[0] for r in conn.execute(
+        f"SELECT DISTINCT month FROM ({TX_SELECT}) ORDER BY month DESC")]
+    return {"years": sorted({m[:4] for m in months}, reverse=True), "months": months}
+
+
 @app.get("/api/spending/monthly")
-def spending_monthly(months: int = 12, conn=Depends(get_conn)):
-    rows = conn.execute(f"""
+def spending_monthly(months: int = 12, year: str | None = None, conn=Depends(get_conn)):
+    """Income and spending per month: the last `months` months, or every month of `year`."""
+    totals = f"""
         SELECT month,
                ROUND(-SUM(CASE WHEN {SPENDING_FILTER} THEN amount ELSE 0 END), 2) AS spending,
                ROUND(SUM(CASE WHEN category = 'Income' THEN amount ELSE 0 END), 2) AS income
-        FROM ({TX_SELECT}) GROUP BY month ORDER BY month DESC LIMIT ?""", (months,)).fetchall()
+        FROM ({TX_SELECT})"""
+    if year:
+        where, params = period_filter(year)
+        found = {r["month"]: dict(r) for r in conn.execute(f"{totals} WHERE {where} GROUP BY month", params)}
+        months_of_year = [f"{year}-{m:02d}" for m in range(1, 13)]
+        return [found.get(m, {"month": m, "spending": 0, "income": 0}) for m in months_of_year]
+    rows = conn.execute(f"{totals} GROUP BY month ORDER BY month DESC LIMIT ?", (months,)).fetchall()
     return [dict(r) for r in reversed(rows)]
 
 
+@app.get("/api/spending/yearly")
+def spending_yearly(conn=Depends(get_conn)):
+    """Income and spending for every year that has transactions, oldest first."""
+    return [dict(r) for r in conn.execute(f"""
+        SELECT substr(month, 1, 4) AS year,
+               ROUND(-SUM(CASE WHEN {SPENDING_FILTER} THEN amount ELSE 0 END), 2) AS spending,
+               ROUND(SUM(CASE WHEN category = 'Income' THEN amount ELSE 0 END), 2) AS income
+        FROM ({TX_SELECT}) GROUP BY year ORDER BY year""")]
+
+
 @app.get("/api/spending/breakdown")
-def spending_breakdown(month: str | None = None, conn=Depends(get_conn)):
-    month = month or date.today().strftime("%Y-%m")
+def spending_breakdown(period: str | None = None, month: str | None = None, conn=Depends(get_conn)):
+    """Where money went and where it came from, for a year or a month."""
+    period = period or month or date.today().strftime("%Y-%m")
+    where, params = period_filter(period)
+    source = f"FROM ({TX_SELECT}) WHERE {where}"
     by_cat = conn.execute(f"""
         SELECT category, ROUND(-SUM(amount), 2) AS total, COUNT(*) AS count
-        FROM ({TX_SELECT}) WHERE month = ? AND {SPENDING_FILTER}
-        GROUP BY category HAVING total > 0 ORDER BY total DESC""", (month,)).fetchall()
+        {source} AND {SPENDING_FILTER}
+        GROUP BY category HAVING total > 0 ORDER BY total DESC""", params).fetchall()
     by_merchant = conn.execute(f"""
         SELECT merchant, category, ROUND(-SUM(amount), 2) AS total, COUNT(*) AS count
-        FROM ({TX_SELECT}) WHERE month = ? AND {SPENDING_FILTER}
-        GROUP BY merchant HAVING total > 0 ORDER BY total DESC LIMIT 10""", (month,)).fetchall()
+        {source} AND {SPENDING_FILTER}
+        GROUP BY merchant HAVING total > 0 ORDER BY total DESC LIMIT 10""", params).fetchall()
+    by_source = conn.execute(f"""
+        SELECT merchant, ROUND(SUM(amount), 2) AS total, COUNT(*) AS count
+        {source} AND category = 'Income'
+        GROUP BY merchant HAVING total > 0 ORDER BY total DESC LIMIT 10""", params).fetchall()
+    spending = round(sum(r["total"] for r in by_cat), 2)
+    income = round(conn.execute(
+        f"SELECT COALESCE(SUM(amount), 0) {source} AND category = 'Income'", params).fetchone()[0], 2)
     return {
-        "month": month,
-        "total": round(sum(r["total"] for r in by_cat), 2),
+        "period": period,
+        "month": period,  # older name, kept for compatibility
+        "total": spending,
+        "income": income,
+        "net": round(income - spending, 2),
         "categories": [dict(r) for r in by_cat],
         "merchants": [dict(r) | {"name": display_name(r["merchant"])} for r in by_merchant],
+        "income_sources": [dict(r) | {"name": display_name(r["merchant"])} for r in by_source],
     }
 
 
@@ -292,8 +432,9 @@ def transactions(month: str | None = None, category: str | None = None,
                  merchant: str | None = None, q: str | None = None,
                  limit: int = 300, conn=Depends(get_conn)):
     where, params = [], []
-    if month:
-        where.append("month = ?"); params.append(month)
+    if month:  # a month ("2026-10") or a whole year ("2026")
+        clause, values = period_filter(month)
+        where.append(clause); params += values
     if category:
         where.append("category = ?"); params.append(category)
     if merchant:
@@ -334,16 +475,65 @@ def delete_rule(merchant: str, conn=Depends(get_conn)):
     return {"ok": True}
 
 
+class DescriptionRuleBody(BaseModel):
+    merchant: str
+    pattern: str
+    category: str
+
+
+@app.put("/api/description-rules")
+def set_description_rule(body: DescriptionRuleBody, conn=Depends(get_conn)):
+    """Categorize a merchant's transactions whose description contains `pattern`."""
+    pattern = description_key(body.pattern)
+    if not pattern:
+        fail(Exception("Type some words from the description (numbers are ignored)."))
+    if body.category not in db.category_names(conn):
+        fail(Exception(f"Unknown category: {body.category}"))
+    with conn:
+        conn.execute(
+            "INSERT INTO description_rules (merchant, pattern, category) VALUES (?, ?, ?) "
+            "ON CONFLICT(merchant, pattern) DO UPDATE SET category = excluded.category",
+            (body.merchant, pattern, body.category))
+    return {"ok": True, "pattern": pattern}
+
+
+@app.delete("/api/description-rules")
+def delete_description_rule(merchant: str, pattern: str, conn=Depends(get_conn)):
+    with conn:
+        conn.execute("DELETE FROM description_rules WHERE merchant = ? AND pattern = ?", (merchant, pattern))
+    return {"ok": True}
+
+
+@app.get("/api/merchant-descriptions")
+def merchant_descriptions(merchant: str, conn=Depends(get_conn)):
+    """A merchant's different descriptions (ignoring digits), and its description rules."""
+    groups: dict[str, dict] = {}
+    for t in conn.execute(f"SELECT * FROM ({TX_SELECT}) WHERE merchant = ? ORDER BY posted DESC", (merchant,)):
+        key = description_key(t["description"])
+        g = groups.setdefault(key, {
+            "key": key, "example": t["description"], "count": 0, "total": 0.0,
+            "last_date": date.fromtimestamp(t["posted"]).isoformat(),
+            "category": t["category"], "rule": t["description_rule"],
+        })
+        g["count"] += 1
+        g["total"] = round(g["total"] + t["amount"], 2)
+    rules = [dict(r) for r in conn.execute(
+        "SELECT pattern, category FROM description_rules WHERE merchant = ? ORDER BY pattern", (merchant,))]
+    return {"descriptions": sorted(groups.values(), key=lambda g: -g["count"]), "rules": rules}
+
+
 # ---------- merchants ----------
 
 @app.get("/api/merchants")
 def merchants(conn=Depends(get_conn)):
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT t.merchant, COUNT(*) AS count,
-               ROUND(-SUM(CASE WHEN t.amount < 0 THEN t.amount ELSE 0 END), 2) AS spent,
+               ROUND(-SUM(CASE WHEN t.amount < 0 AND t.{SPENDING_FILTER} THEN t.amount ELSE 0 END), 2) AS spent,
                MAX(t.posted) AS last_posted, MAX(t.description) AS example,
+               COUNT(DISTINCT desc_key(t.description)) AS variants,
+               (SELECT COUNT(*) FROM description_rules d WHERE d.merchant = t.merchant) AS description_rules,
                r.category AS rule_category, l.version AS logo_version
-        FROM transactions t
+        FROM ({TX_SELECT}) t
         LEFT JOIN merchant_rules r ON r.merchant = t.merchant
         LEFT JOIN merchant_logos l ON l.merchant = t.merchant
         GROUP BY t.merchant ORDER BY count DESC, spent DESC""").fetchall()
@@ -457,6 +647,7 @@ MAX_CSV_CHARS = 20_000_000
 class ImportPreviewBody(BaseModel):
     csv: str
     mapping: dict | None = None
+    file_name: str | None = None
 
 
 def _parse_csv(body) -> tuple[list[str], list[list[str]], dict]:
@@ -482,11 +673,17 @@ def import_preview(body: ImportPreviewBody, conn=Depends(get_conn)):
         return result | {"problem": str(e), "preview": [], "errors": [], "error_count": 0}
 
     rules = dict(conn.execute("SELECT merchant, category FROM merchant_rules").fetchall())
+    description_rules = conn.execute(
+        "SELECT merchant, pattern, category FROM description_rules ORDER BY length(pattern) DESC").fetchall()
     preview = []
     for t in txs[:8]:
         merchant = normalize_merchant(t["description"])
-        category = rules.get(merchant) or db.resolve_category(conn, categorize(t["description"], t["amount"]))
-        preview.append({"date": t["date"].isoformat(), "description": t["description"],
+        key = description_key(t["description"])
+        category = (next((d["category"] for d in description_rules if d["merchant"] == merchant and d["pattern"] in key), None)
+                    or rules.get(merchant) or db.resolve_category(conn, categorize(t["description"], t["amount"])))
+        posted = int(datetime(t["date"].year, t["date"].month, t["date"].day, 12).timestamp())  # as importer saves it
+        day = date.fromtimestamp(purchase_date(posted, t["description"]))
+        preview.append({"date": day.isoformat(), "description": t["description"],
                         "amount": t["amount"], "category": category, "name": display_name(merchant)})
     dates = [t["date"] for t in txs]
     return result | {
@@ -535,6 +732,7 @@ def import_csv(body: ImportBody, conn=Depends(get_conn)):
             if not conn.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id or "",)).fetchone():
                 fail(Exception("Choose an account to import into."))
 
+        db.archive(conn, "csv", body.file_name or "imported.csv", body.csv.encode())
         before = conn.execute("SELECT COUNT(*) FROM transactions WHERE account_id = ? AND id LIKE ?",
                               (account_id, f"{account_id}:csv:%")).fetchone()[0]
         # Year-end summaries have no card payments, so they can't rebuild past balances.
@@ -542,11 +740,13 @@ def import_csv(body: ImportBody, conn=Depends(get_conn)):
         for tx in importer.to_simplefin_shape(txs, affects_balance):
             upsert_transaction(conn, account_id, tx)
         importer.drop_overlap(conn, account_id)
+        match_transfers(conn)
         after = conn.execute("SELECT COUNT(*) FROM transactions WHERE account_id = ? AND id LIKE ?",
                              (account_id, f"{account_id}:csv:%")).fetchone()[0]
         if db.get_setting(conn, "mode") is None:
             db.set_setting(conn, "mode", "manual")
 
+    backup_if_real(conn)
     imported = after - before
     return {"imported": imported, "skipped": len(txs) - imported, "unreadable": len(errors), "account_id": account_id}
 
@@ -564,10 +764,11 @@ MAX_PDF_BYTES = 15 * 1024 * 1024
 
 
 @app.post("/api/import/pdf")
-def import_pdf(body: PdfImportBody):
+def import_pdf(body: PdfImportBody, conn=Depends(get_conn)):
     """Read statement PDFs into the same CSV form the importer already handles.
 
-    Nothing is saved here; the UI previews the result and then imports it.
+    Each PDF is kept in the originals archive as soon as it's read; the
+    transactions are only saved once the user confirms the preview.
     """
     statements, rows = [], []
     for f in body.files:
@@ -577,6 +778,8 @@ def import_pdf(body: PdfImportBody):
             if len(data) > MAX_PDF_BYTES:
                 raise pdf_statements.StatementError("is too large.")
             parsed = pdf_statements.parse(data)
+            with conn:
+                db.archive(conn, "pdf", f.name, data)
         except (binascii.Error, pdf_statements.StatementError) as e:
             statements.append(entry | {"error": f"{f.name} {e}"})
             continue
@@ -619,6 +822,7 @@ def import_summary(conn=Depends(get_conn)):
 @app.delete("/api/import")
 def undo_import(account_id: str, conn=Depends(get_conn)):
     """Remove all imported transactions for an account (and the account itself if it was created by an import)."""
+    backup_if_real(conn, "before-undo-import")
     with conn:
         if account_id.startswith("manual-"):
             conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
@@ -642,6 +846,15 @@ def shutdown(background: BackgroundTasks):
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+NO_CACHE = {"Cache-Control": "no-cache"}  # browsers must check for a newer version each time
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    """The page, with each script and stylesheet URL stamped with its file's
+    version, so a browser never mixes a new page with old cached code."""
+    html = (STATIC / "index.html").read_text()
+    for asset in ("app.js", "style.css"):
+        version = hashlib.sha1((STATIC / asset).read_bytes()).hexdigest()[:10]
+        html = html.replace(f"/static/{asset}", f"/static/{asset}?v={version}")
+    return Response(html, media_type="text/html", headers=NO_CACHE)
