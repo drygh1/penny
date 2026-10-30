@@ -1,0 +1,3 @@
+# For running the tests: uv pip install --python .venv -r requirements-dev.txt
+-r requirements.txt
+pytest==9.2.0

@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS description_rules (
     PRIMARY KEY (merchant, pattern)
 );
 
+-- Merchants you combined: transactions under `alias` count as `merchant`.
+-- Transactions keep their own merchant, so combining can be undone.
+CREATE TABLE IF NOT EXISTS merchant_aliases (
+    alias    TEXT PRIMARY KEY,
+    merchant TEXT NOT NULL
+);
+
 -- One transaction put in a category by hand. Wins over every rule.
 CREATE TABLE IF NOT EXISTS transaction_categories (
     tx_id    TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,

@@ -135,3 +135,37 @@ def test_one_purchase_can_differ_from_its_merchant(client):
     by_id = {t["id"]: t for t in client.get("/api/transactions", params={"merchant": merchant}).json()}
     assert by_id[first["id"]]["category"] == "Travel" and not by_id[first["id"]]["edited"]
     assert client.put("/api/transaction-category", json={"id": "nope", "category": "Fees"}).status_code == 400
+
+
+def test_income_sources_keep_their_color_across_periods(client):
+    periods = client.get("/api/periods").json()["months"]
+    slots = {}
+    for p in periods:
+        for s in client.get("/api/spending/breakdown", params={"period": p}).json()["income_sources"]:
+            assert slots.setdefault(s["merchant"], s["color_slot"]) == s["color_slot"]
+    assert 1 in slots.values()
+    assert all(v is None or 1 <= v <= 6 for v in slots.values())
+
+
+def test_combining_merchants_and_separating_them_again(client):
+    merchants = client.get("/api/merchants").json()
+    keep, other = merchants[0]["merchant"], merchants[1]["merchant"]
+    counts = {m["merchant"]: m["count"] for m in merchants}
+    client.put("/api/merchant-rules", json={"merchant": other, "category": "Travel"})
+
+    assert client.post("/api/merchants/combine", json={"merchant": keep, "others": [other]}).status_code == 200
+    after = {m["merchant"]: m for m in client.get("/api/merchants").json()}
+    assert other not in after and after[keep]["count"] == counts[keep] + counts[other]
+    assert after[keep]["combined"] == [{"merchant": other, "name": other.title()}]
+    assert after[keep]["rule_category"] == "Travel"  # its rule came along, since keep had none
+    assert {t["merchant"] for t in client.get("/api/transactions", params={"merchant": keep, "limit": 1000}).json()} == {keep}
+
+    # Combining into a merchant that was itself combined lands on the one that stays.
+    third = merchants[2]["merchant"]
+    client.post("/api/merchants/combine", json={"merchant": other, "others": [third]})
+    assert third not in {m["merchant"] for m in client.get("/api/merchants").json()}
+
+    client.delete("/api/merchants/combine", params={"alias": other})
+    after = {m["merchant"]: m for m in client.get("/api/merchants").json()}
+    assert after[other]["count"] == counts[other]
+    assert client.post("/api/merchants/combine", json={"merchant": keep, "others": [keep]}).status_code == 400

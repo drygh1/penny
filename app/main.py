@@ -66,15 +66,19 @@ async def only_local_pages(request: Request, call_next):
         response.headers.update(NO_CACHE)
     return response
 
+# `merchant` is the combined merchant (see merchant_aliases); rules, logos and
+# everything shown use it. `own_merchant` is what the bank's wording gave.
 TX_SELECT = """
-    SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.merchant, t.pending,
+    SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.merchant, t.own_merchant, t.pending,
            COALESCE(o.category, d.category, r.category, t.category) AS category,
            COALESCE(d.category, r.category, t.category) AS default_category,
            o.category IS NOT NULL AS edited,
            d.pattern AS description_rule,
            strftime('%Y-%m', t.posted, 'unixepoch', 'localtime') AS month,
            COALESCE(a.nickname, a.name) AS account_name
-    FROM transactions t
+    FROM (SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.payee, t.pending, t.category,
+                 t.affects_balance, t.merchant AS own_merchant, COALESCE(ma.merchant, t.merchant) AS merchant
+          FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant) t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN transaction_categories o ON o.tx_id = t.id
     LEFT JOIN merchant_rules r ON r.merchant = t.merchant
@@ -84,6 +88,9 @@ TX_SELECT = """
         ORDER BY length(d2.pattern) DESC LIMIT 1)
 """
 SPENDING_FILTER = "category NOT IN ({})".format(",".join(f"'{c}'" for c in NON_SPENDING))
+# Income sources colored on the dashboard, using the first color slots (checked
+# for colorblind separation in that order, light and dark).
+INCOME_COLORS = 6
 
 
 def get_conn():
@@ -482,6 +489,11 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
     spending = round(sum(r["total"] for r in by_cat), 2)
     income = round(conn.execute(
         f"SELECT COALESCE(SUM(amount), 0) {source} AND category = 'Income'", params).fetchone()[0], 2)
+    # Your biggest income sources of all time get a color each, so a source keeps
+    # its color whichever month you look at; the rest share "Everything else".
+    income_slots = {r["merchant"]: i + 1 for i, r in enumerate(conn.execute(f"""
+        SELECT merchant FROM ({TX_SELECT}) WHERE category = 'Income'
+        GROUP BY merchant HAVING SUM(amount) > 0 ORDER BY SUM(amount) DESC LIMIT {INCOME_COLORS}"""))}
     return {
         "period": period,
         "month": period,  # older name, kept for compatibility
@@ -490,7 +502,8 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
         "net": round(income - spending, 2),
         "categories": [dict(r) for r in by_cat],
         "merchants": [dict(r) | {"name": display_name(r["merchant"])} for r in by_merchant],
-        "income_sources": [dict(r) | {"name": display_name(r["merchant"])} for r in by_source],
+        "income_sources": [dict(r) | {"name": display_name(r["merchant"]), "color_slot": income_slots.get(r["merchant"])}
+                           for r in by_source],
     }
 
 
@@ -636,14 +649,61 @@ def merchants(conn=Depends(get_conn)):
         GROUP BY t.merchant ORDER BY count DESC, spent DESC""").fetchall()
     # The automatic category is whichever one most of the merchant's transactions got.
     auto: dict[str, tuple[str, int]] = {}
-    for r in conn.execute("SELECT merchant, category, COUNT(*) AS n FROM transactions GROUP BY merchant, category"):
+    for r in conn.execute(
+            "SELECT COALESCE(ma.merchant, t.merchant) AS merchant, t.category, COUNT(*) AS n "
+            "FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant GROUP BY 1, 2"):
         if r["merchant"] not in auto or r["n"] > auto[r["merchant"]][1]:
             auto[r["merchant"]] = (r["category"], r["n"])
+    combined: dict[str, list] = {}
+    for r in conn.execute("SELECT alias, merchant FROM merchant_aliases ORDER BY alias"):
+        combined.setdefault(r["merchant"], []).append({"merchant": r["alias"], "name": display_name(r["alias"])})
     return [dict(r) | {
         "name": display_name(r["merchant"]),
         "auto_category": auto[r["merchant"]][0],
         "last_date": date.fromtimestamp(r["last_posted"]).isoformat(),
+        "combined": combined.get(r["merchant"], []),
     } for r in rows]
+
+
+class CombineBody(BaseModel):
+    merchant: str  # the one that stays
+    others: list[str]
+
+
+@app.post("/api/merchants/combine")
+def combine_merchants(body: CombineBody, conn=Depends(get_conn)):
+    """Count other merchants' transactions as `merchant` from now on.
+
+    Rules and pictures the others had move over when `merchant` has none of
+    its own. Merchants already combined into one of the others come along.
+    """
+    keep = conn.execute("SELECT merchant FROM merchant_aliases WHERE alias = ?", (body.merchant,)).fetchone()
+    target = keep["merchant"] if keep else body.merchant
+    others = {o for o in body.others if o != target}
+    if not others:
+        fail(Exception("Choose at least one other merchant to combine."))
+    with conn:
+        for other in others:
+            conn.execute("INSERT INTO merchant_aliases (alias, merchant) VALUES (?, ?) "
+                         "ON CONFLICT(alias) DO UPDATE SET merchant = excluded.merchant", (other, target))
+            conn.execute("UPDATE merchant_aliases SET merchant = ? WHERE merchant = ?", (target, other))
+            conn.execute("INSERT OR IGNORE INTO merchant_rules (merchant, category) "
+                         "SELECT ?, category FROM merchant_rules WHERE merchant = ?", (target, other))
+            conn.execute("INSERT OR IGNORE INTO description_rules (merchant, pattern, category) "
+                         "SELECT ?, pattern, category FROM description_rules WHERE merchant = ?", (target, other))
+            conn.execute("INSERT OR IGNORE INTO merchant_logos (merchant, mime, image, version) "
+                         "SELECT ?, mime, image, version FROM merchant_logos WHERE merchant = ?", (target, other))
+            for table in ("merchant_rules", "description_rules", "merchant_logos"):
+                conn.execute(f"DELETE FROM {table} WHERE merchant = ?", (other,))
+    return {"ok": True, "merchant": target}
+
+
+@app.delete("/api/merchants/combine")
+def split_merchant(alias: str, conn=Depends(get_conn)):
+    """Undo combining: `alias` is its own merchant again (with no rules of its own)."""
+    with conn:
+        conn.execute("DELETE FROM merchant_aliases WHERE alias = ?", (alias,))
+    return {"ok": True}
 
 
 @app.get("/api/merchant-logos")
@@ -791,11 +851,13 @@ def import_preview(body: ImportPreviewBody, conn=Depends(get_conn)):
         return result | {"problem": str(e), "preview": [], "errors": [], "error_count": 0}
 
     rules = dict(conn.execute("SELECT merchant, category FROM merchant_rules").fetchall())
+    aliases = dict(conn.execute("SELECT alias, merchant FROM merchant_aliases").fetchall())
     description_rules = conn.execute(
         "SELECT merchant, pattern, category FROM description_rules ORDER BY length(pattern) DESC").fetchall()
     preview = []
     for t in txs[:8]:
         merchant = normalize_merchant(t["description"])
+        merchant = aliases.get(merchant, merchant)
         key = description_key(t["description"])
         category = (next((d["category"] for d in description_rules if d["merchant"] == merchant and d["pattern"] in key), None)
                     or rules.get(merchant) or db.resolve_category(conn, categorize(t["description"], t["amount"])))

@@ -148,6 +148,8 @@ async function loadDashboard() {
   $("#flow-hint").textContent = `Click a ${flowView === "years" ? "year" : "month"} to look closer. ` +
     "Transfers between your accounts aren't counted as income or spending.";
   document.querySelectorAll("[data-flow-view]").forEach((btn) => btn.setAttribute("aria-pressed", btn.dataset.flowView === flowView));
+  document.querySelectorAll("[data-went-view]").forEach((btn) =>
+    btn.setAttribute("aria-pressed", (btn.dataset.wentView === "month") === !!period.month));
 
   // Tiles: compare with the previous period of the same length.
   const prev = await api(`/api/spending/breakdown?period=${shiftPeriod(-1)}`);
@@ -212,6 +214,18 @@ function renderPeriodControls() {
 
 $("#period-year").onchange = (e) => setPeriod(e.target.value + (period.month ? `-${period.month}` : ""));
 $("#period-month").onchange = (e) => setPeriod(period.year + (e.target.value ? `-${e.target.value}` : ""));
+// The Month | Year switch on "Where it went" is a shortcut for the month menu's
+// "Whole year", so the whole page follows. Going back to Month returns to the
+// month you were on, or this month (December for past years).
+let lastMonth = period.month;
+document.querySelectorAll("[data-went-view]").forEach((btn) => btn.onclick = () => {
+  if (btn.dataset.wentView === "year") {
+    if (period.month) { lastMonth = period.month; setPeriod(period.year); }
+  } else if (!period.month) {
+    const now = thisMonth();
+    setPeriod(`${period.year}-${lastMonth || (period.year === now.slice(0, 4) ? now.slice(5) : "12")}`);
+  }
+});
 $("#period-prev").onclick = () => setPeriod(shiftPeriod(-1));
 $("#period-next").onclick = () => setPeriod(shiftPeriod(1));
 
@@ -299,10 +313,42 @@ function renderBreakdown(b) {
   $("#merchant-list").innerHTML = b.merchants.length
     ? b.merchants.map((m) => listRow(m, `${m.category} · ${m.count} ${m.count === 1 ? "charge" : "charges"}`)).join("")
     : `<div class="empty">No spending in ${periodLabel(b.period)}.</div>`;
-  $("#income-list").innerHTML = b.income_sources.length
-    ? b.income_sources.map((m) => listRow(m, `${m.count} ${m.count === 1 ? "deposit" : "deposits"} · ${Math.round((m.total / b.income) * 100)}% of income`)).join("")
-    : `<div class="empty">No income in ${periodLabel(b.period)}.</div>`;
+  renderIncome(b);
   drawDonut(b);
+}
+
+// Income by source, drawn like spending by category. Sources color by their
+// all-time rank (from the server), not this period's, so colors don't shuffle.
+const sourceColorVar = (s) => s.color_slot ? `var(--series-${s.color_slot})` : "var(--series-other)";
+
+function renderIncome(b) {
+  const sources = b.income_sources;
+  const max = Math.max(...sources.map((s) => s.total), 1);
+  const pct = (v) => Math.round((v / b.income) * 100);
+  $("#income-bars").innerHTML = sources.length
+    ? sources.map((s) => `
+        <div class="bar-row" data-tx-merchant="${esc(s.merchant)}" data-month="${b.period}" title="See transactions">
+          <span class="bar-label"><span class="dot" style="background:${sourceColorVar(s)}" aria-hidden="true"></span>${esc(s.name)}</span>
+          <span class="bar-value">${money(s.total)} · ${pct(s.total)}% · ${s.count} ${s.count === 1 ? "deposit" : "deposits"}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${(s.total / max) * 100}%;background:${sourceColorVar(s)}"></div></div>
+        </div>`).join("")
+    : `<div class="empty">No income in ${periodLabel(b.period)}.</div>`;
+
+  // Slices in color-slot order, like the spending donut; uncolored sources
+  // (and any past the top 10 listed) share one gray slice.
+  const colored = sources.filter((s) => s.color_slot).sort((x, y) => x.color_slot - y.color_slot);
+  const slices = colored.map((s) => ({ label: s.name, value: s.total, color: css(`--series-${s.color_slot}`), merchant: s.merchant }));
+  const rest = Math.round((b.income - colored.reduce((sum, s) => sum + s.total, 0)) * 100) / 100;
+  if (rest > 0) {
+    slices.push({ label: OTHER_LABEL, value: rest, color: colorValue(OTHER_LABEL),
+                  parts: sources.filter((s) => !s.color_slot).map((s) => s.name) });
+  }
+  $("#income-donut-total").textContent = fmt0.format(b.income);
+  $("#income-donut-month").textContent = periodLabel(b.period);
+  drawDonutChart("chart-income-donut", slices, b.income, (s) => {
+    txFilters = { month: b.period, category: "", q: s.merchant };
+    location.hash = "transactions";
+  });
 }
 
 // Donut slices go in the fixed palette order, so each color always sits
@@ -321,7 +367,16 @@ function drawDonut(b) {
   }
   $("#donut-total").textContent = fmt0.format(b.total);
   $("#donut-month").textContent = periodLabel(b.period);
-  drawChart("chart-donut", {
+  drawDonutChart("chart-donut", slices, b.total, (s) => {
+    txFilters = { month: b.period, category: s.label, q: "" };
+    location.hash = "transactions";
+  });
+}
+
+// A donut of `slices` ({label, value, color, parts?}). Clicking a slice calls
+// onPick, except the gray one that groups several (`parts`).
+function drawDonutChart(id, slices, total, onPick) {
+  drawChart(id, {
     type: "doughnut",
     data: {
       labels: slices.map((s) => s.label),
@@ -340,17 +395,14 @@ function drawDonut(b) {
           backgroundColor: css("--surface"), titleColor: css("--text"), bodyColor: css("--text-2"),
           borderColor: css("--axis"), borderWidth: 1, padding: 10, boxPadding: 4,
           callbacks: {
-            label: (c) => ` ${money(c.parsed)} · ${Math.round((c.parsed / b.total) * 100)}%`,
+            label: (c) => ` ${money(c.parsed)} · ${Math.round((c.parsed / total) * 100)}%`,
             afterLabel: (c) => slices[c.dataIndex].parts ? ` ${slices[c.dataIndex].parts.join(", ")}` : "",
           },
         },
       },
       onClick: (_, els) => {
         const s = els.length && slices[els[0].index];
-        if (s && !s.parts) {
-          txFilters = { month: b.period, category: s.label, q: "" };
-          location.hash = "transactions";
-        }
+        if (s && !s.parts) onPick(s);
       },
       onHover: (e, els) => (e.native.target.style.cursor = els.length ? "pointer" : "default"),
     },
@@ -557,8 +609,10 @@ function renderMerchants() {
       <button class="avatar-btn" data-logo-pick="${key}" title="${hasLogo ? "Change" : "Add"} picture for ${esc(m.name)}">${avatar(m.merchant, m.name)}</button>
       <div class="main">
         <div class="title">${esc(m.name)}${m.rule_category ? '<span class="rule-tag">Rule</span>' : ""}${descTag}</div>
-        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}${descToggle}</div>
-        <div class="meta example">${esc(m.example)}</div>
+        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}${descToggle} · <button class="link-btn" data-combine="${key}">Combine…</button></div>
+        <div class="meta example">${esc(m.example)}</div>${m.combined.length ? `
+        <div class="meta combined">Includes ${m.combined.map((c) =>
+          `${esc(c.name)} <button class="link-btn" data-split="${esc(c.merchant)}" title="Make ${esc(c.name)} its own merchant again">Separate</button>`).join(", ")}</div>` : ""}
       </div>
       <div class="m-controls">
         <label class="m-category">${dot(effective)}<select data-rule-merchant="${key}" aria-label="Category for ${esc(m.name)}">${options}</select></label>
@@ -668,7 +722,14 @@ $("#merchant-rows").addEventListener("click", async (e) => {
   const remove = e.target.closest("[data-logo-remove]");
   const toggle = e.target.closest("[data-desc-toggle]");
   const removeRule = e.target.closest("[data-desc-remove]");
-  if (toggle) {
+  const combine = e.target.closest("[data-combine]");
+  const split = e.target.closest("[data-split]");
+  if (combine) {
+    openCombine(combine.dataset.combine);
+  } else if (split) {
+    await api(`/api/merchants/combine?alias=${encodeURIComponent(split.dataset.split)}`, { method: "DELETE" });
+    loadMerchants();
+  } else if (toggle) {
     const merchant = toggle.dataset.descToggle;
     if (openDescriptions.delete(merchant)) return renderMerchants();
     openDescriptions.add(merchant);
@@ -688,6 +749,52 @@ $("#merchant-rows").addEventListener("click", async (e) => {
     loadMerchants();
   }
 });
+
+// ---------- combining merchants ----------
+// One payer or seller can show up under several names ("Acme Corp",
+// "Acme Payroll"). Combining counts them all as the one you started from.
+
+let combineTarget = null;
+const combineChecked = new Set();
+
+function openCombine(merchant) {
+  combineTarget = merchantRows.find((m) => m.merchant === merchant);
+  combineChecked.clear();
+  $("#combine-title").textContent = `Combine with ${combineTarget.name}`;
+  $("#combine-text").textContent = `Pick the merchants that are really ${combineTarget.name}. Their transactions will count as ${combineTarget.name}, here and on the dashboard.`;
+  $("#combine-msg").textContent = "";
+  // Start the search with the first word, which finds most other spellings.
+  $("#combine-search").value = combineTarget.name.split(" ")[0];
+  renderCombineOptions();
+  $("#combine-dialog").showModal();
+}
+
+function renderCombineOptions() {
+  const q = $("#combine-search").value.trim().toLowerCase();
+  const others = merchantRows.filter((m) => m.merchant !== combineTarget.merchant &&
+    (!q || m.name.toLowerCase().includes(q) || m.example.toLowerCase().includes(q) || combineChecked.has(m.merchant)));
+  $("#combine-options").innerHTML = others.length ? others.slice(0, 100).map((m) => `
+      <label><input type="checkbox" value="${esc(m.merchant)}"${combineChecked.has(m.merchant) ? " checked" : ""}>
+        ${avatar(m.merchant, m.name, "avatar small")}<span>${esc(m.name)}</span>
+        <span class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"}</span></label>`).join("")
+    : `<div class="empty">No other merchants match.</div>`;
+}
+
+$("#combine-search").oninput = renderCombineOptions;
+$("#combine-options").onchange = (e) => {
+  if (e.target.checked) combineChecked.add(e.target.value); else combineChecked.delete(e.target.value);
+};
+$("#combine-form").onsubmit = async (e) => {
+  if (e.submitter?.value !== "combine") return;
+  e.preventDefault();
+  try {
+    await api("/api/merchants/combine", { method: "POST", body: { merchant: combineTarget.merchant, others: [...combineChecked] } });
+    $("#combine-dialog").close();
+    loadMerchants();
+  } catch (err) {
+    $("#combine-msg").className = "msg error"; $("#combine-msg").textContent = err.message;
+  }
+};
 
 $("#logo-input").onchange = async (e) => {
   const file = e.target.files[0];

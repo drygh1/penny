@@ -75,7 +75,16 @@
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>Where it went</h2><span class="muted" id="went-period"></span></div>
+        <div class="card-head">
+          <h2>Where it went</h2>
+          <div class="flow-tools">
+            <span class="muted" id="went-period"></span>
+            <div class="segmented" role="group" aria-label="Show spending for">
+              <button type="button" data-went-view="month" aria-pressed="true">Month</button>
+              <button type="button" data-went-view="year" aria-pressed="false">Year</button>
+            </div>
+          </div>
+        </div>
         <div class="breakdown">
           <div class="donut-box">
             <canvas id="chart-donut" aria-label="Spending by category donut chart"></canvas>
@@ -88,15 +97,23 @@
         </div>
       </div>
 
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-head"><h2>Where it came from</h2><span class="muted" id="came-period"></span></div>
-          <div id="income-list" class="list"></div>
+      <div class="card">
+        <div class="card-head"><h2>Where it came from</h2><span class="muted" id="came-period"></span></div>
+        <div class="breakdown">
+          <div class="donut-box">
+            <canvas id="chart-income-donut" aria-label="Income by source donut chart"></canvas>
+            <div class="donut-center" aria-hidden="true">
+              <div class="donut-total" id="income-donut-total"></div>
+              <div class="muted" id="income-donut-month"></div>
+            </div>
+          </div>
+          <div id="income-bars" class="bars"></div>
         </div>
-        <div class="card">
-          <div class="card-head"><h2>Top merchants</h2><span class="muted" id="merchants-period"></span></div>
-          <div id="merchant-list" class="list"></div>
-        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Top merchants</h2><span class="muted" id="merchants-period"></span></div>
+        <div id="merchant-list" class="list"></div>
       </div>
 
       <div class="card">
@@ -297,6 +314,19 @@
       <div class="row dialog-actions">
         <button class="btn secondary" value="cancel">Cancel</button>
         <button class="btn danger" value="delete">Delete category</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="combine-dialog">
+    <form id="combine-form" method="dialog">
+      <h2 id="combine-title"></h2>
+      <p id="combine-text"></p>
+      <input id="combine-search" type="search" placeholder="Search merchants" aria-label="Search merchants">
+      <div id="combine-options" class="combine-options"></div>
+      <p id="combine-msg" class="msg"></p>
+      <div class="row dialog-actions">
+        <button class="btn secondary" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn" value="combine">Combine</button>
       </div>
     </form>
   </dialog>
