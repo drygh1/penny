@@ -11,6 +11,7 @@ import io
 import os
 import signal
 import subprocess
+import sys
 import time
 from urllib.parse import urlsplit
 import uuid
@@ -30,7 +31,9 @@ from .categorize import (COLOR_SLOTS, LOCKED_CATEGORIES, NON_SPENDING, categoriz
 from .sync import (match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
                    upsert_transaction)
 
-STATIC = Path(__file__).resolve().parent.parent / "static"
+# Inside the Mac app (PyInstaller), bundled files sit under sys._MEIPASS.
+STATIC = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "static"
+DESKTOP = os.environ.get("PENNY_DESKTOP") == "1"  # running as the Mac app (app/desktop.py)
 @asynccontextmanager
 async def lifespan(app):
     # Apply any keyword improvements to transactions synced before them.
@@ -118,6 +121,7 @@ def status(conn=Depends(get_conn)):
         "mode": db.get_setting(conn, "mode"),  # None, "demo", or "simplefin"
         "connected": db.get_setting(conn, "simplefin_access_url") is not None,
         "last_sync": datetime.fromtimestamp(int(last)).isoformat() if last else None,
+        "desktop": DESKTOP,  # the Mac app stops when you quit it, so it has no Stop button
     }
 
 

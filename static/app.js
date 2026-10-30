@@ -87,6 +87,7 @@ async function route() {
 async function refreshStatus() {
   status = await api("/api/status");
   $("#sync-btn").hidden = !status.connected;
+  $("#stop-btn").hidden = status.desktop;  // quitting the Mac app stops Penny
   $("#last-sync").textContent = status.mode === "demo"
     ? "Demo data"
     : status.last_sync ? `Synced ${new Date(status.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";

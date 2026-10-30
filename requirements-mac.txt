@@ -1,0 +1,4 @@
+# For building the Mac app (scripts/build_mac_app.sh), not for running Penny from its folder.
+-r requirements.txt
+pywebview==6.2.1
+pyinstaller==6.22.3

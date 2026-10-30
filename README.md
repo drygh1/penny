@@ -9,9 +9,23 @@ A personal Rocket Money replacement that runs on your own computer. It tracks:
 Bank data comes from [SimpleFIN Bridge](https://bridge.simplefin.org), which costs about $15 a year.
 Everything is stored on your own Mac. Nothing is sent anywhere except the requests to SimpleFIN for your bank data.
 
-## Install
+## Install the app
 
-Penny runs on a Mac. You'll need Terminal for the first setup only.
+Penny runs on a Mac (macOS 12.3 or later).
+
+1. Open `Penny-1.0.dmg` and drag **Penny** onto **Applications**.
+2. Open Penny. The first time, macOS says it can't check Penny for malware, because Penny isn't signed with a paid Apple developer account. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Penny. You only do this once.
+
+Penny opens in its own window. Quitting it (⌘Q) stops it completely. Your data is kept in
+`~/Library/Application Support/Penny/data`, with backups next to it in `backups`. The log is `data/penny.log` there.
+
+The app is built for the kind of Mac it was built on: Apple Silicon (M1 and later) or Intel.
+To build it, run `scripts/build_mac_app.sh`; it makes `dist/Penny.app` and `dist/Penny-1.0.dmg`.
+Set `PENNY_VERSION=1.1` first to change the version number.
+
+## Install from the code instead
+
+You'll need Terminal for the first setup only.
 
 1. Install [uv](https://docs.astral.sh/uv/), which sets up Python for Penny. In Terminal:
    ```bash
@@ -33,7 +47,9 @@ From then on, open Penny like any other app. If you move the `penny` folder, run
 
 To update to a newer version later: `cd ~/penny && git pull`, then stop Penny and open it again.
 
-## Run it
+## Run it (from the code)
+
+These steps are for the code install. The app above just opens like any other app.
 
 Open **Penny** from Spotlight (⌘ Space, type "Penny"), Launchpad, or the Dock. It starts
 Penny in the background if needed and opens http://127.0.0.1:8000 in your browser.
