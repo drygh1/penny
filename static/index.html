@@ -38,7 +38,10 @@
       </div>
     </section>
 
+    <div id="update-banner" class="card notice" hidden></div>
+
     <section id="view-dashboard" class="view" hidden>
+      <div id="guide" class="card guide" hidden></div>
       <div class="period-bar">
         <h1 id="period-title"></h1>
         <div class="period-controls">
@@ -123,6 +126,7 @@
     </section>
 
     <section id="view-subscriptions" class="view" hidden>
+      <div class="tip" data-tip="subscriptions" hidden><span class="tip-label">Tip</span><p>Penny finds charges that repeat on a schedule. A new one shows up after 2 or 3 charges. Use <b>Move to bills</b> for things you can't cancel, and <b>Not recurring</b> to hide anything that isn't.</p><button class="link-btn" data-tip-dismiss="subscriptions">Got it</button></div>
       <div class="tiles">
         <div class="tile"><div class="label">Subscriptions</div><div class="value" id="s-monthly"></div><div class="sub" id="s-count"></div></div>
         <div class="tile"><div class="label">Bills</div><div class="value" id="b-monthly"></div><div class="sub" id="b-count"></div></div>
@@ -147,6 +151,7 @@
     </section>
 
     <section id="view-transactions" class="view" hidden>
+      <div class="tip" data-tip="transactions" hidden><span class="tip-label">Tip</span><p>The category dropdown changes just that purchase. To change every purchase from that merchant, click <b>Use for all</b> under it afterward.</p><button class="link-btn" data-tip-dismiss="transactions">Got it</button></div>
       <div class="card">
         <div class="filters">
           <input id="tx-search" type="search" placeholder="Search">
@@ -164,6 +169,7 @@
     </section>
 
     <section id="view-merchants" class="view" hidden>
+      <div class="tip" data-tip="merchants" hidden><span class="tip-label">Tip</span><p>Set each merchant's usual category here. If one shows up under two names, like your employer as "Acme Corp" and "Acme Payroll", click <b>Combine…</b> to make them one.</p><button class="link-btn" data-tip-dismiss="merchants">Got it</button></div>
       <div class="card">
         <div class="card-head">
           <h2>Merchants</h2>
@@ -183,6 +189,7 @@
     </section>
 
     <section id="view-accounts" class="view" hidden>
+      <div class="tip" data-tip="accounts" hidden><span class="tip-label">Tip</span><p>Assets are what you have and debts are what you owe. Click <b>Rename</b> to give an account a shorter name. Older points on the chart are worked out from your transactions, so they're close estimates.</p><button class="link-btn" data-tip-dismiss="accounts">Got it</button></div>
       <div class="tiles">
         <div class="tile"><div class="label">Net worth</div><div class="value" id="a-networth"></div></div>
         <div class="tile"><div class="label">Assets</div><div class="value" id="a-assets"></div></div>
@@ -205,18 +212,49 @@
     </section>
 
     <section id="view-settings" class="view" hidden>
-      <div class="card">
-        <h2>Connect your bank with SimpleFIN</h2>
-        <ol class="steps">
-          <li>Create an account at <a href="https://bridge.simplefin.org" target="_blank" rel="noopener">bridge.simplefin.org</a> (about $15/year) and link your banks there.</li>
-          <li>In SimpleFIN, choose <b>New Connection</b> to create a <b>Setup Token</b>, and copy it.</li>
-          <li>Paste it below. It works only once. Penny trades it for a private access key, which is stored only on this computer.</li>
-        </ol>
+      <div class="card" id="connect">
+        <div class="card-head"><h2>Connect your bank</h2><span class="muted" id="connect-state"></span></div>
+        <p class="muted">
+          Penny gets your transactions through <b>SimpleFIN Bridge</b>, a small service that costs about $15 a year.
+          You sign in to your bank on SimpleFIN's website, never in Penny. Penny only gets permission to read
+          balances and transactions, so nothing in Penny can move money.
+        </p>
+        <details id="connect-steps" open>
+          <summary>How to connect, step by step (about 10 minutes)</summary>
+          <ol class="steps walkthrough">
+            <li>
+              <b>Make a SimpleFIN account.</b> Open SimpleFIN Bridge, sign up, and pay for a year.
+              <div><a class="btn small secondary" href="https://bridge.simplefin.org" target="_blank" rel="noopener">Open SimpleFIN Bridge</a></div>
+            </li>
+            <li>
+              <b>Link your banks there.</b> In SimpleFIN, add each bank and credit card you want in Penny and sign in to it.
+              You can add more later; Penny picks them up on the next sync.
+            </li>
+            <li>
+              <b>Make a setup token.</b> In SimpleFIN, choose <b>New Connection</b>. It gives you a <b>Setup Token</b>,
+              a long line of letters and numbers. Copy all of it.
+            </li>
+            <li>
+              <b>Paste it here and click Connect.</b> The first download can take a minute.
+              If you were trying the demo, connecting replaces the made-up transactions with yours.
+            </li>
+          </ol>
+        </details>
         <form id="connect-form" class="row">
-          <input id="setup-token" placeholder="Paste setup token" autocomplete="off" required>
+          <input id="setup-token" placeholder="Paste your setup token" autocomplete="off" required>
           <button class="btn" type="submit">Connect</button>
         </form>
         <p id="connect-msg" class="msg"></p>
+        <details class="faq">
+          <summary>Good to know</summary>
+          <ul>
+            <li><b>A setup token works once.</b> If Penny says it was already used, make a new one in SimpleFIN and paste that.</li>
+            <li><b>Penny keeps a private key, not your bank password.</b> The token is traded for an access key that's stored only on this Mac.</li>
+            <li><b>Sync when you like.</b> Click <b>Sync</b> in the top bar. SimpleFIN allows about 24 syncs a day, so a few a day is plenty.</li>
+            <li><b>History:</b> the first sync brings in recent months. For older transactions, use <b>Import older transactions</b> below.</li>
+            <li><b>Stopping:</b> <b>Disconnect</b> under "Your data" stops syncing and keeps everything already downloaded.</li>
+          </ul>
+        </details>
       </div>
       <div class="card" id="import-card">
         <div class="card-head"><h2>Import older transactions</h2></div>
@@ -302,6 +340,12 @@
         </div>
         <p class="muted hint">Disconnecting keeps everything already downloaded. Deleting makes a backup first.</p>
         <p id="data-msg" class="msg"></p>
+      </div>
+      <div class="card" id="updates-card" hidden>
+        <div class="card-head"><h2>Updates</h2><span class="muted" id="app-version"></span></div>
+        <label class="check"><input type="checkbox" id="updates-on"> Tell me when a new version of Penny is out</label>
+        <p class="muted hint">Once a day, Penny asks GitHub whether there's a newer version. Nothing about you or your money is sent.</p>
+        <div class="row"><button class="btn secondary small" id="update-check">Check now</button><span id="update-msg" class="msg"></span></div>
       </div>
     </section>
   </main>

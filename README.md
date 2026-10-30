@@ -13,15 +13,32 @@ Everything is stored on your own Mac. Nothing is sent anywhere except the reques
 
 Penny runs on a Mac (macOS 12.3 or later).
 
-1. Open `Penny-1.0.dmg` and drag **Penny** onto **Applications**.
-2. Open Penny. The first time, macOS says it can't check Penny for malware, because Penny isn't signed with a paid Apple developer account. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Penny. You only do this once.
+1. Get the right file for your Mac. Check  → **About This Mac**: if it says **Chip: Apple M1** (or M2, M3…), use `Penny-1.0-apple-silicon.dmg`; if it says **Processor: Intel**, use `Penny-1.0-intel.dmg`.
+2. Open the `.dmg` and drag **Penny** onto **Applications**.
+3. Open Penny. The first time, macOS says it can't check Penny for malware, because Penny isn't signed with a paid Apple developer account. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Penny. You only do this once.
 
 Penny opens in its own window. Quitting it (⌘Q) stops it completely. Your data is kept in
 `~/Library/Application Support/Penny/data`, with backups next to it in `backups`. The log is `data/penny.log` there.
 
-The app is built for the kind of Mac it was built on: Apple Silicon (M1 and later) or Intel.
-To build it, run `scripts/build_mac_app.sh`; it makes `dist/Penny.app` and `dist/Penny-1.0.dmg`.
-Set `PENNY_VERSION=1.1` first to change the version number.
+A **Getting started** checklist on the dashboard walks you through trying the demo, connecting
+your bank, and checking categories and subscriptions. Each page also has a short tip at the top
+until you click **Got it**.
+
+### Building and releasing (for whoever shares Penny)
+
+`scripts/build_mac_app.sh` builds both versions: `dist/Penny-<version>-apple-silicon.dmg` and
+`dist/Penny-<version>-intel.dmg`. On an Apple Silicon Mac the Intel one is built through Rosetta
+(`softwareupdate --install-rosetta` if it's missing). Pass `arm64` or `x86_64` to build just one.
+
+To release a new version:
+
+1. Change `__version__` in `app/__init__.py` (for example to `"1.1"`) and run the build script.
+2. On GitHub, make a release with the tag `v1.1`, write a line or two about what changed, and attach both `.dmg` files.
+
+Once a day the app checks the newest GitHub release and shows a **Download** notice when it's newer
+than the installed version. The check is a plain request to GitHub with nothing about you or your money in it,
+and it can be turned off in **Settings → Updates**. It only works when the releases can be seen
+without signing in to GitHub (a public repository); otherwise it quietly finds nothing.
 
 ## Install from the code instead
 

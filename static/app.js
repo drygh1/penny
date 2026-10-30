@@ -71,8 +71,9 @@ function avatar(merchant, name, cls = "avatar") {
 
 const VIEWS = ["dashboard", "subscriptions", "transactions", "merchants", "accounts", "settings"];
 
+// "#settings/connect" shows Settings and scrolls to the element with id "connect".
 async function route() {
-  let view = location.hash.slice(1) || "dashboard";
+  let [view, anchor] = (location.hash.slice(1) || "dashboard").split("/");
   if (!VIEWS.includes(view)) view = "dashboard";
   const hasData = !!status.mode;
   if (!hasData && view !== "settings") view = "welcome";
@@ -80,8 +81,10 @@ async function route() {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
-  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), loadData()]), dashboard: loadDashboard, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
-  if (loaders[view]) await loaders[view]();
+  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), loadData(), loadUpdatesCard()]), dashboard: loadDashboard, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
+  await Promise.all([loaders[view]?.(), hasData && loadGuide(view)]);
+  if (view === "settings") showConnectState(anchor === "connect");
+  if (anchor) document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function refreshStatus() {
@@ -1235,6 +1238,127 @@ $("#backup-list").addEventListener("click", async (e) => {
   }
 });
 
+// ---------- getting started ----------
+// A checklist on the dashboard until the main steps are done (or it's hidden),
+// and one tip at the top of each page until "Got it". The server works out
+// which steps are done and remembers what was dismissed.
+
+const GUIDE_STEPS = {
+  demo: { title: "Look around with demo data",
+          text: "Made-up transactions, so you can see what Penny does before connecting anything." },
+  connect: { title: "Connect your bank",
+             text: "Through SimpleFIN Bridge, about $15 a year. It takes about 10 minutes.",
+             action: `<a class="btn small" href="#settings/connect">Show me how</a>` },
+  import: { title: "Bring in older history",
+            text: "Your bank's CSV downloads fill in the months before your first sync.",
+            action: `<a class="btn small secondary" href="#settings/import-card">Import</a>` },
+  categories: { title: "Check your categories",
+                text: "Penny guesses from keywords. Fix a few merchants and it remembers for next time.",
+                action: `<a class="btn small secondary" href="#merchants">Open Merchants</a>` },
+  subscriptions: { title: "Review subscriptions and bills",
+                   text: "See what charges you on a schedule, and hide anything that isn't recurring.",
+                   action: `<a class="btn small secondary" href="#subscriptions">Open Subscriptions</a>` },
+};
+
+async function loadGuide(view) {
+  if (["subscriptions", "transactions", "merchants", "accounts"].includes(view)) {
+    await api("/api/guide/seen", { method: "POST", body: { view } });
+  }
+  const g = await api("/api/guide");
+  document.querySelectorAll("[data-tip]").forEach((tip) => (tip.hidden = g.tips_dismissed.includes(tip.dataset.tip)));
+  renderGuide(g);
+}
+
+function renderGuide(g) {
+  const required = g.steps.filter((s) => !s.optional);
+  const el = $("#guide");
+  el.hidden = g.dismissed || required.every((s) => s.done);
+  if (el.hidden) return;
+  const done = g.steps.filter((s) => s.done).length;
+  el.innerHTML = `
+    <div class="card-head">
+      <h2>Getting started</h2>
+      <div class="row"><span class="muted">${done} of ${g.steps.length} done</span>
+        <button class="link-btn" data-guide-dismiss>Hide</button></div>
+    </div>
+    <ol class="guide-steps">${g.steps.map((s, i) => {
+      const step = GUIDE_STEPS[s.id];
+      return `<li class="${s.done ? "done" : ""}">
+        <span class="guide-mark" aria-hidden="true">${s.done ? "✓" : i + 1}</span>
+        <div class="guide-text">
+          <div class="title">${step.title}${s.optional ? ' <span class="muted">· Optional</span>' : ""}${s.done ? '<span class="sr-only"> (done)</span>' : ""}</div>
+          <div class="meta">${step.text}</div>
+        </div>
+        ${!s.done && step.action ? step.action : ""}
+      </li>`;
+    }).join("")}</ol>`;
+}
+
+document.addEventListener("click", async (e) => {
+  const tip = e.target.closest("[data-tip-dismiss]");
+  const guideHide = e.target.closest("[data-guide-dismiss]");
+  if (tip) {
+    tip.closest("[data-tip]").hidden = true;
+    await api("/api/guide/dismiss", { method: "POST", body: { view: tip.dataset.tipDismiss } });
+  } else if (guideHide) {
+    $("#guide").hidden = true;
+    await api("/api/guide/dismiss", { method: "POST", body: {} });
+  }
+});
+
+// Once connected, the connect card shrinks to a status line; the steps stay one click away.
+function showConnectState(expand) {
+  $("#connect-state").textContent = status.connected ? "Connected" : "";
+  $("#connect-steps").open = expand || !status.connected;
+}
+
+// ---------- updates (Mac app only) ----------
+
+async function checkForUpdate(force = false) {
+  if (!status.desktop) return null;
+  const u = await api(`/api/update${force ? "?force=true" : ""}`);
+  const banner = $("#update-banner");
+  banner.hidden = !u.available;
+  if (u.available) {
+    banner.innerHTML = `<div><b>Penny ${esc(u.latest)} is out.</b> You have ${esc(u.current)}.
+        ${u.notes ? `<div class="meta update-notes">${esc(u.notes)}</div>` : ""}</div>
+      <div class="row">
+        <a class="btn small" href="${esc(u.url)}" target="_blank" rel="noopener">Download</a>
+        <button class="link-btn" data-update-dismiss="${esc(u.latest)}">Not now</button>
+      </div>`;
+  }
+  return u;
+}
+
+async function loadUpdatesCard() {
+  $("#updates-card").hidden = !status.desktop;
+  if (!status.desktop) return;
+  const u = await api("/api/update");
+  $("#app-version").textContent = `Version ${u.current}`;
+  $("#updates-on").checked = u.enabled;
+}
+
+$("#updates-on").onchange = async (e) => {
+  await api("/api/update", { method: "POST", body: { enabled: e.target.checked } });
+};
+$("#update-check").onclick = async () => {
+  const msg = $("#update-msg");
+  msg.className = "msg"; msg.textContent = "Checking…";
+  try {
+    const u = await checkForUpdate(true);
+    msg.textContent = !u.enabled ? "Turn on the checkbox above to check."
+      : u.available ? `Penny ${u.latest} is available. See the note at the top.` : "You have the newest version.";
+  } catch (err) {
+    msg.className = "msg error"; msg.textContent = err.message;
+  }
+};
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-update-dismiss]");
+  if (!btn) return;
+  $("#update-banner").hidden = true;
+  await api("/api/update", { method: "POST", body: { dismiss: btn.dataset.updateDismiss } });
+});
+
 // ---------- settings & actions ----------
 
 // msg is the status line to report into, or null to use alerts.
@@ -1322,4 +1446,5 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rou
 (async () => {
   await Promise.all([refreshCategories(), refreshStatus(), refreshLogos()]);
   route();
+  checkForUpdate().catch(() => {});  // offline is fine; it tries again next launch
 })();

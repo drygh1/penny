@@ -346,3 +346,41 @@ table.tx { width: 100%; border-collapse: collapse; }
 #data-card h3 { margin-top: 24px; }
 #backup-details { margin-top: 12px; }
 #backup-details summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+
+/* Getting started: the dashboard checklist, page tips, and the update notice */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.guide .card-head .row { gap: 12px; }
+.guide-steps { list-style: none; margin: 4px 0 0; padding: 0; }
+.guide-steps li {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+.guide-steps li:first-child { border-top: 0; }
+.guide-steps .title { font-weight: 500; }
+.guide-steps .meta { color: var(--muted); font-size: 13px; }
+.guide-mark {
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 13px; font-weight: 600; border: 1px solid var(--axis); color: var(--text-2);
+}
+.guide-steps li.done .guide-mark { background: var(--accent-soft); border-color: transparent; color: var(--text); }
+.guide-steps li.done .title { color: var(--text-2); }
+.tip {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--accent-soft); border-radius: var(--radius); padding: 12px 16px;
+}
+.tip p { margin: 0; flex: 1; color: var(--text); font-size: 14px; }
+.tip-label { font-weight: 600; font-size: 13px; color: var(--text); white-space: nowrap; padding-top: 1px; }
+.tip .link-btn { white-space: nowrap; padding: 0 4px; }
+.notice { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-color: var(--accent); }
+.update-notes { white-space: pre-line; margin-top: 4px; }
+#connect details { margin: 12px 0; }
+#connect summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.walkthrough li { margin: 12px 0; }
+.walkthrough li div { margin-top: 6px; }
+.faq ul { color: var(--text-2); padding-left: 20px; font-size: 14px; }
+.faq li { margin: 6px 0; }
+
+@media (max-width: 760px) {
+  .guide-steps li { grid-template-columns: 28px minmax(0, 1fr); }
+  .guide-steps li > .btn { grid-column: 2; justify-self: start; }
+}

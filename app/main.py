@@ -8,7 +8,9 @@ import hashlib
 import binascii
 import csv
 import io
+import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -20,6 +22,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -171,6 +174,116 @@ def load_demo(conn=Depends(get_conn)):
     if has_real_data(conn):
         fail(Exception("Loading demo data would replace your real transactions. Delete your data first."))
     demo.load(conn)
+    with conn:
+        db.set_setting(conn, "guide:demo", 1)
+    return {"ok": True}
+
+
+# ---------- getting started ----------
+# A checklist on the dashboard and a tip on each page, for someone new to Penny.
+# Steps tick themselves off from what you've done; visits count only once real
+# data is in, so poking around the demo doesn't check anything off.
+
+GUIDE_VIEWS = ("subscriptions", "transactions", "merchants", "accounts")
+
+
+@app.get("/api/guide")
+def guide(conn=Depends(get_conn)):
+    real = has_real_data(conn)
+    seen = lambda view: bool(db.get_setting(conn, f"guide:seen:{view}"))
+    any_rows = lambda table: conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+    edited = real and any(any_rows(t) for t in ("merchant_rules", "description_rules",
+                                               "transaction_categories", "merchant_aliases"))
+    imported = conn.execute("SELECT 1 FROM raw_archive WHERE kind IN ('csv', 'pdf') LIMIT 1").fetchone()
+    steps = [
+        {"id": "demo", "optional": True, "done": bool(db.get_setting(conn, "guide:demo")) or real},
+        {"id": "connect", "optional": False, "done": real},
+        {"id": "import", "optional": True, "done": imported is not None},
+        {"id": "categories", "optional": False, "done": edited or seen("merchants")},
+        {"id": "subscriptions", "optional": False, "done": seen("subscriptions")},
+    ]
+    return {
+        "steps": steps,
+        "dismissed": bool(db.get_setting(conn, "guide:dismissed")),
+        "tips_dismissed": [v for v in GUIDE_VIEWS if db.get_setting(conn, f"guide:tip:{v}")],
+    }
+
+
+class GuideBody(BaseModel):
+    view: str | None = None
+
+
+@app.post("/api/guide/seen")
+def guide_seen(body: GuideBody, conn=Depends(get_conn)):
+    """Note a page visit, for the checklist. Ignored until real data is in."""
+    if body.view in GUIDE_VIEWS and has_real_data(conn):
+        with conn:
+            db.set_setting(conn, f"guide:seen:{body.view}", 1)
+    return {"ok": True}
+
+
+@app.post("/api/guide/dismiss")
+def guide_dismiss(body: GuideBody, conn=Depends(get_conn)):
+    """Hide the checklist (no view) or one page's tip, for good."""
+    if body.view is not None and body.view not in GUIDE_VIEWS:
+        fail(Exception(f"Unknown page: {body.view}"))
+    with conn:
+        db.set_setting(conn, f"guide:tip:{body.view}" if body.view else "guide:dismissed", 1)
+    return {"ok": True}
+
+
+# ---------- updates (Mac app) ----------
+# Once a day the app asks GitHub for the newest release. Nothing about you or your
+# data is sent; it's a plain request for the release list. Turn it off in Settings.
+
+UPDATE_FEED = os.environ.get("PENNY_UPDATE_FEED", "https://api.github.com/repos/drygh1/penny/releases/latest")
+UPDATE_EVERY = 24 * 3600
+
+
+def _version_tuple(v: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", v)[:3])
+
+
+@app.get("/api/update")
+def check_update(force: bool = False, conn=Depends(get_conn)):
+    from . import __version__
+    enabled = db.get_setting(conn, "updates_off") is None
+    result = {"current": __version__, "enabled": enabled, "available": False}
+    if not (DESKTOP and enabled and UPDATE_FEED):
+        return result
+    checked = int(db.get_setting(conn, "update_checked_at") or 0)
+    if force or time.time() - checked > UPDATE_EVERY:
+        try:
+            r = httpx.get(UPDATE_FEED, timeout=5, headers={"Accept": "application/vnd.github+json"})
+            r.raise_for_status()
+            release = r.json()
+            latest = {"version": release.get("tag_name", "").lstrip("v"), "url": release.get("html_url", ""),
+                      "notes": (release.get("body") or "")[:600]}
+        except Exception:
+            latest = None  # offline, or no public releases yet: try again tomorrow
+        with conn:
+            db.set_setting(conn, "update_checked_at", int(time.time()))
+            if latest and latest["version"]:
+                db.set_setting(conn, "update_latest", json.dumps(latest))
+    latest = json.loads(db.get_setting(conn, "update_latest") or "null")
+    if latest and _version_tuple(latest["version"]) > _version_tuple(__version__) \
+            and db.get_setting(conn, "update_dismissed") != latest["version"]:
+        result |= {"available": True, "latest": latest["version"], "url": latest["url"], "notes": latest["notes"]}
+    return result
+
+
+class UpdateSettingsBody(BaseModel):
+    enabled: bool | None = None
+    dismiss: str | None = None  # hide the notice for this version
+
+
+@app.post("/api/update")
+def update_settings(body: UpdateSettingsBody, conn=Depends(get_conn)):
+    with conn:
+        if body.enabled is not None:
+            db.set_setting(conn, "updates_off", None if body.enabled else 1)
+        if body.dismiss:
+            db.set_setting(conn, "update_dismissed", body.dismiss)
     return {"ok": True}
 
 
