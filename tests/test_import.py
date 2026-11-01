@@ -1,3 +1,4 @@
+import time
 from datetime import date, timedelta
 
 import pytest
@@ -197,3 +198,39 @@ def test_renamed_account_keeps_its_name_through_syncs(client):
     client.put("/api/accounts/name", json={"id": account_id, "name": ""})
     assert names()[account_id]["name"] == "Latitude Checking"
     assert client.put("/api/accounts/name", json={"id": "nope", "name": "X"}).status_code == 400
+
+
+def test_brokerage_with_a_few_recent_transactions_still_counts_back(client):
+    """A brokerage started reporting a 1¢ dividend and its reinvestment. That's not
+    the account's history, so the deposit from savings must still carry it back."""
+    from app import db
+    text = csv_for([(date.today() - timedelta(days=200), "PAYCHECK PAYROLL", 2000),
+                    (date.today() - timedelta(days=100), "Withdrawal ACH VANGUARD BUY INVESTMENT", -6000)])
+    mapping = client.post("/api/import/preview", json={"csv": text}).json()["mapping"]
+    client.post("/api/import", json={"csv": text, "mapping": mapping,
+                                     "new_account": {"name": "Savings", "balance": 3000}})
+    conn = db.connect()
+    with conn:
+        conn.execute("INSERT INTO accounts (id, org_name, name, balance) VALUES ('ira', 'Vanguard', 'Retirement Account', 8000)")
+        conn.execute("INSERT INTO balance_snapshots (account_id, day, balance) VALUES ('ira', ?, 8000)",
+                     ((date.today() - timedelta(days=2)).isoformat(),))
+        for amt, desc in ((0.01, "DIVIDEND RECEIVED"), (-0.01, "REINVESTMENT")):
+            conn.execute("INSERT INTO transactions (id, account_id, posted, amount, description, merchant, category) "
+                         "VALUES (?, 'ira', ?, ?, ?, 'vanguard', 'Investments')",
+                         (f"ira-{desc}", int(time.time()) - 86400, amt, desc))
+    steps = [abs(b["net_worth"] - a["net_worth"]) for a, b in
+             zip(client.get("/api/accounts").json()["history"], client.get("/api/accounts").json()["history"][1:])]
+    assert max(steps) < 2500  # only the paycheck moves it; the deposit and the first IRA balance don't
+
+
+def test_account_whose_history_starts_later_does_not_jump(client):
+    """An account's balance before its first transaction is unknown, not $0."""
+    early = csv_for([(date.today() - timedelta(days=300), "PINECREST GROCERY", -20)])
+    late = csv_for([(date.today() - timedelta(days=60), "PINECREST GROCERY", -20)])
+    for name, text, balance in (("Checking", early, 1000), ("Savings", late, 7000)):
+        mapping = client.post("/api/import/preview", json={"csv": text}).json()["mapping"]
+        client.post("/api/import", json={"csv": text, "mapping": mapping,
+                                         "new_account": {"name": name, "balance": balance}})
+    history = client.get("/api/accounts").json()["history"]
+    steps = [abs(b["net_worth"] - a["net_worth"]) for a, b in zip(history, history[1:])]
+    assert max(steps) <= 20.01 and history[0]["net_worth"] == 8040

@@ -610,12 +610,17 @@ def earlier_balances(conn, snaps) -> list[dict]:
     much further (imported CSV history). Walking those transactions backward
     from the first recorded balance rebuilds what the balance must have been.
 
-    Brokerages and crypto wallets often report a balance but no transactions.
-    Those are walked back with the deposits and withdrawals seen from your
-    other accounts ("FID BKG SVC" in savings is money into Fidelity), with all
-    of one institution's accounts as one pool, so moving money in doesn't look
-    like it disappeared. Market gains and losses can't be seen, so this part
-    is an estimate; it never goes below zero.
+    Every account counts across the whole chart. Before its own transactions
+    begin, an account holds the earliest balance they lead back to: Penny
+    doesn't know it, and counting it as $0 would make the chart jump the day
+    its history starts.
+
+    Brokerages and crypto wallets often report a balance but few or no
+    transactions. For those, the deposits and withdrawals seen from your other
+    accounts ("FID BKG SVC" in savings is money into Fidelity) carry on where
+    their own transactions stop, with all of one institution's accounts as one
+    pool, so moving money in doesn't look like it disappeared. Market gains and
+    losses can't be seen, so this part is an estimate; it never goes below zero.
     """
     first: dict[str, dict] = {}
     for s in snaps:
@@ -633,27 +638,29 @@ def earlier_balances(conn, snaps) -> list[dict]:
 
     out, pools = [], {}
     for account_id, s in first.items():
-        day0 = date.fromisoformat(s["day"])
-        if history[account_id]:
-            txs = [(d, amt) for d, amt, _ in history[account_id] if d <= day0]
-            if txs and txs[-1][0] < day0:
-                out += _walk_back(account_id, day0, s["balance"], txs, txs[-1][0], anchor)
-            continue
         org = conn.execute("SELECT org_name FROM accounts WHERE id = ?", (account_id,)).fetchone()["org_name"]
-        pools.setdefault(org, []).append(s)
+        if institution_words(org):
+            pools.setdefault(org, []).append(s)
+            continue
+        day0 = date.fromisoformat(s["day"])
+        own = [(d, amt) for d, amt, _ in history[account_id] if d <= day0]
+        out += _walk_back(account_id, day0, s["balance"], own, earliest, anchor)
 
     for org, members in pools.items():
         words = institution_words(org)
-        # Money leaving your other accounts toward this institution came into it.
-        flows = sorted(((d, -amt) for txs in history.values() for d, amt, desc in txs
-                        if words and any(w in desc.lower() for w in words)), reverse=True)
+        ids = {s["account_id"] for s in members}
         day0 = min(date.fromisoformat(s["day"]) for s in members)
-        flows = [f for f in flows if f[0] <= day0]
+        own = [(d, amt) for a in ids for d, amt, _ in history[a] if d <= day0]
+        # Money leaving your other accounts toward this institution came into it,
+        # counted only from before its own records start, so nothing counts twice.
+        own_start = min((d for d, _ in own), default=day0 + timedelta(days=1))
+        flows = [(d, -amt) for a, txs in history.items() if a not in ids for d, amt, desc in txs
+                 if d < own_start and any(w in desc.lower() for w in words)]
         # The pool's history rides on its biggest account; at the first sync
         # every member's real balance takes over.
         lead = max(members, key=lambda s: s["balance"])["account_id"]
         total = sum(s["balance"] for s in members)
-        out += _walk_back(lead, day0, total, flows, earliest, anchor, floor=0)
+        out += _walk_back(lead, day0, total, sorted(own + flows, reverse=True), earliest, anchor, floor=0)
     return out
 
 
