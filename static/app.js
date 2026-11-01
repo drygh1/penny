@@ -45,6 +45,7 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) location.replace("/login");  // on a phone whose sign-in ran out
   if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
   return data;
 }
@@ -81,7 +82,8 @@ async function route() {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
-  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), loadData(), loadUpdatesCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
+  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), status.remote ? null : loadData(),
+                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
   await Promise.all([loaders[view]?.(), hasData && loadGuide(view)]);
   if (view === "settings") showConnectState(anchor === "connect");
   if (anchor) document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -90,8 +92,13 @@ async function route() {
 async function refreshStatus() {
   status = await api("/api/status");
   $("#sync-btn").hidden = !status.connected;
-  $("#stop-btn").hidden = status.desktop;  // quitting the Mac app stops Penny
+  $("#stop-btn").hidden = status.desktop || status.remote;  // quitting the Mac app stops Penny
   showReviewCount(status.to_review);
+  // On a phone over Meshnet: the Mac-only settings are hidden (the server refuses them anyway).
+  for (const id of ["#connect", "#data-card", "#updates-card"]) $(id).hidden = status.remote;
+  $("#phone-card").hidden = !status.remote;
+  $("#demo-banner").hidden = status.mode !== "demo" || status.remote;
+  document.querySelectorAll('[data-action="demo"]').forEach((b) => b.hidden = status.remote || b.hidden);
   $("#last-sync").textContent = status.mode === "demo"
     ? "Demo data"
     : status.last_sync ? `Synced ${new Date(status.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
@@ -170,6 +177,12 @@ async function loadDashboard() {
   $("#t-subs").textContent = `${money(subs.monthly_total)}/mo in subscriptions & bills`;
 
   drawFlowChart(flow);
+  // The picked month or year in words, under the chart. It stays put through the
+  // redraw, unlike the chart's pop-up, which a tap on a phone barely shows.
+  const net = b.income - b.total;
+  $("#flow-summary").innerHTML = `<b>${esc(periodLabel())}${ongoing ? " so far" : ""}</b>
+    <span>Income ${money(b.income)}</span><span>Spending ${money(b.total)}</span>
+    <span class="${net < 0 ? "negative-text" : ""}">${net < 0 ? "Overspent" : "Saved"} ${money(Math.abs(net))}</span>`;
   renderBreakdown(b);
 
   // Upcoming charges in the next 30 days
@@ -250,13 +263,22 @@ document.querySelectorAll("[data-flow-view]").forEach((btn) => btn.onclick = () 
 // year shows that whole year.
 function drawFlowChart(rows) {
   const byYear = flowView === "years";
+  // On a phone-width chart, months are one letter and amounts short ($5k), so 24 bars fit.
+  const narrow = $("#chart-monthly").parentElement.clientWidth < 520;
   const bars = rows.map((r) => byYear
-    ? { ...r, key: r.year, label: r.year, title: r.year, faded: r.year !== period.year }
-    : { ...r, key: r.month, label: monthLabel(r.month).split(" ")[0], title: monthLabel(r.month, "long"),
+    ? { ...r, key: r.year, label: narrow ? `'${r.year.slice(2)}` : r.year, title: r.year, faded: r.year !== period.year }
+    : { ...r, key: r.month, label: monthLabel(r.month).split(" ")[0].slice(0, narrow ? 1 : 3), title: monthLabel(r.month, "long"),
         faded: !!period.month && r.month.slice(5) !== period.month });
   const ongoing = (key) => key === thisMonth() || key === thisMonth().slice(0, 4);
   const income = colorHex("--income"), spending = colorHex("--spending");
   const o = baseChartOptions();
+  if (narrow) {
+    const short = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
+    o.scales.y.ticks.callback = (v) => short.format(v);
+    o.scales.y.ticks.maxTicksLimit = 5;
+    o.scales.x.ticks.maxRotation = 0;
+    o.scales.x.ticks.autoSkip = false;
+  }
   o.plugins.tooltip.displayColors = true;
   o.plugins.tooltip.callbacks = {
     title: (items) => { const b = bars[items[0].dataIndex]; return b.title + (ongoing(b.key) ? " (so far)" : ""); },
@@ -275,8 +297,8 @@ function drawFlowChart(rows) {
     else setPeriod(period.month === key.slice(5) ? period.year : key);
   };
   o.onHover = (e, els) => (e.native.target.style.cursor = els.length ? "pointer" : "default");
-  const bar = { borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", maxBarThickness: byYear ? 48 : 22,
-                categoryPercentage: 0.7, barPercentage: 0.9 };
+  const bar = { borderRadius: { topLeft: narrow ? 2 : 4, topRight: narrow ? 2 : 4 }, borderSkipped: "bottom",
+                maxBarThickness: byYear ? 48 : 22, categoryPercentage: narrow ? 0.82 : 0.7, barPercentage: 0.9 };
   const fill = (color) => bars.map((b) => (b.faded ? color + "59" : color));
   drawChart("chart-monthly", {
     type: "bar",
@@ -1365,10 +1387,16 @@ const GUIDE_STEPS = {
   subscriptions: { title: "Review subscriptions and bills",
                    text: "See what charges you on a schedule, and hide anything that isn't recurring.",
                    action: `<a class="btn small secondary" href="#subscriptions">Open Subscriptions</a>` },
+  review: { title: "Check your new transactions",
+            text: "New transactions wait on the Review page. Confirm each category with ✓, or pick a better one.",
+            action: `<a class="btn small secondary" href="#review">Open Review</a>` },
+  phone: { title: "Use Penny on your iPhone",
+           text: "Through NordVPN Meshnet or Tailscale, which connect only your own devices.",
+           action: `<a class="btn small secondary" href="#settings/share-card">Set it up</a>` },
 };
 
 async function loadGuide(view) {
-  if (["review", "subscriptions", "transactions", "merchants", "accounts"].includes(view)) {
+  if (["dashboard", "review", "subscriptions", "transactions", "merchants", "accounts"].includes(view)) {
     await api("/api/guide/seen", { method: "POST", body: { view } });
   }
   const g = await api("/api/guide");
@@ -1379,7 +1407,8 @@ async function loadGuide(view) {
 function renderGuide(g) {
   const required = g.steps.filter((s) => !s.optional);
   const el = $("#guide");
-  el.hidden = g.dismissed || required.every((s) => s.done);
+  // Setting up happens on the Mac, so the phone doesn't show the checklist.
+  el.hidden = status.remote || g.dismissed || required.every((s) => s.done);
   if (el.hidden) return;
   const done = g.steps.filter((s) => s.done).length;
   el.innerHTML = `
@@ -1465,6 +1494,79 @@ document.addEventListener("click", async (e) => {
   $("#update-banner").hidden = true;
   await api("/api/update", { method: "POST", body: { dismiss: btn.dataset.updateDismiss } });
 });
+
+// ---------- using Penny on an iPhone (Mac side) ----------
+// See app/remote.py: off until turned on, only over Meshnet/Tailscale, passcode required.
+
+async function loadShareCard() {
+  $("#share-card").hidden = status.remote;
+  if (status.remote) return;
+  renderShare(await api("/api/remote"));
+}
+
+function renderShare(s) {
+  const addrs = [...new Set([...(s.address ? [s.address] : []), ...s.addresses])];
+  $("#share-addresses").innerHTML = addrs.length
+    ? addrs.map((a) => `<label class="check"><input type="radio" name="share-addr" value="${esc(a)}"${a === s.address ? " checked" : ""}>
+        ${esc(a)}${s.addresses.includes(a) ? "" : ' <span class="muted">(not on this Mac right now)</span>'}</label>`).join("")
+    : `<p class="msg">No Meshnet address found. Turn on Meshnet in NordVPN on this Mac, then come back.</p>`;
+  $("#share-pass-state").textContent = s.has_passcode ? "A passcode is set. Saving a new one signs every device out." : "";
+  $("#share-on").checked = s.enabled;
+  $("#share-on").disabled = !(s.address && s.has_passcode);
+  $("#share-awake").checked = s.keep_awake;
+  $("#share-state").textContent = s.listening ? "On" : s.enabled ? "Waiting" : "Off";
+  const msg = $("#share-msg");
+  msg.className = s.error ? "msg error" : "msg";
+  msg.textContent = s.error || (s.listening ? `Sharing at ${s.url}. ${s.devices} ${s.devices === 1 ? "device" : "devices"} signed in.` : "");
+  $("#share-ready").hidden = !s.listening;
+  $("#share-signout").hidden = !s.devices;
+  if (s.listening) {
+    $("#share-url").textContent = s.url;
+    fetch("/api/remote/qr").then((r) => r.text()).then((svg) => { $("#share-qr").innerHTML = svg; });
+  }
+}
+
+async function saveShare(body) {
+  try {
+    renderShare(await api("/api/remote", { method: "POST", body }));
+  } catch (err) {
+    $("#share-msg").className = "msg error"; $("#share-msg").textContent = err.message;
+    loadShareCard().catch(() => {});
+  }
+}
+
+// "Show" lets you check what you typed; a saved passcode can't be shown (only a hash is kept).
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-show-pass]");
+  if (!btn) return;
+  const input = document.getElementById(btn.dataset.showPass);
+  const show = input.type === "password";
+  input.type = show ? "text" : "password";
+  btn.textContent = show ? "Hide" : "Show";
+  btn.setAttribute("aria-pressed", show);
+  input.focus();
+});
+
+$("#share-addresses").onchange = (e) => e.target.name === "share-addr" && saveShare({ address: e.target.value });
+$("#share-pass-form").onsubmit = async (e) => {
+  e.preventDefault();
+  await saveShare({ passcode: $("#share-pass").value });
+  $("#share-pass").value = "";
+  $("#share-pass").type = "password";  // hidden again once it's saved
+  const show = document.querySelector('[data-show-pass="share-pass"]');
+  show.textContent = "Show"; show.setAttribute("aria-pressed", false);
+};
+$("#share-on").onchange = (e) => saveShare({ enabled: e.target.checked });
+$("#share-awake").onchange = (e) => saveShare({ keep_awake: e.target.checked });
+$("#share-signout").onclick = async () => {
+  if (!confirm("Sign out every phone and device? They'll need the passcode again.")) return;
+  await api("/api/remote/sign-out-all", { method: "POST" });
+  loadShareCard();
+};
+$("#phone-signout").onclick = async () => {
+  await api("/api/logout", { method: "POST" });
+  location.replace("/login");
+};
 
 // ---------- settings & actions ----------
 

@@ -94,3 +94,21 @@ def test_card_payment_pairs_as_a_card_payment(client):
     assert cats["ONLINE/MOBILE RECURRING"] == "Credit Card Payments"
     month = client.get("/api/spending/monthly").json()[-1]
     assert month["spending"] == 0 and month["income"] == 0
+
+
+def test_money_arriving_on_a_card_is_never_income(client):
+    def card(rows):
+        text = "Date,Description,Amount\n" + "".join(f"{d:%m/%d/%Y},{desc},{amt}\n" for d, desc, amt in rows)
+        mapping = client.post("/api/import/preview", json={"csv": text}).json()["mapping"]
+        mapping["flip"] = False
+        client.post("/api/import", json={"csv": text, "mapping": mapping,
+                                         "new_account": {"name": "Visa", "balance": -2500}})
+    card([(this_month, "PENDING PAYMENT", 1890.00),           # a bank's pending card payment
+          (this_month, "FERRY TICKETS REFUND", 74.25),   # a refund
+          (this_month, "FERRY TICKETS", -150.00)])
+    client.put("/api/merchant-rules", json={"merchant": "ferry tickets", "category": "Travel"})
+    cats = categories_by_desc(client)
+    assert cats["PENDING PAYMENT"] == "Credit Card Payments"
+    assert cats["FERRY TICKETS REFUND"] != "Income"
+    month = client.get("/api/spending/monthly").json()[-1]
+    assert month["income"] == 0

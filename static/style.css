@@ -336,7 +336,13 @@ table.tx { width: 100%; border-collapse: collapse; }
   .m-descriptions .desc-row { grid-template-columns: minmax(0, 1fr); }
   .m-descriptions select { width: 100%; }
   .m-category { width: 100%; }
-  .sub-controls select { width: 130px; }
+  /* Subscriptions: the category menu and buttons get their own line under the name. */
+  .item:has(.sub-controls) { flex-wrap: wrap; }
+  .item:has(.sub-controls) .main { flex-basis: calc(100% - 150px); }
+  .sub-controls { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding-left: 46px; }
+  .sub-controls select { flex: 1; min-width: 0; width: auto; }
+  /* Names wrap onto a second line instead of being cut off. */
+  .item .title { white-space: normal; overflow-wrap: anywhere; }
 }
 
 .item.clickable { cursor: pointer; }
@@ -408,3 +414,38 @@ table.tx { width: 100%; border-collapse: collapse; }
   .review-controls select { width: 100%; }
   .review-controls .m-category { width: 100%; }
 }
+
+/* Using Penny on an iPhone */
+.share-ready { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.share-qr { background: #fff; border-radius: 8px; padding: 6px; line-height: 0; }
+.share-qr svg { width: 170px; height: 170px; }
+#share-card .steps .row { margin-top: 8px; }
+.login { max-width: 420px; margin: 12vh auto 0; }
+.login-icon { border-radius: 16px; }
+.login form { justify-content: center; margin-top: 16px; }
+.login input { flex: 1; min-width: 160px; }
+
+/* Home Screen app on iPhone: keep clear of the notch and the home bar. */
+@supports (padding: env(safe-area-inset-top)) {
+  .topbar { padding-top: max(12px, env(safe-area-inset-top)); }
+  main { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+}
+/* A passcode box with Show/Hide inside its right edge */
+.pass-field { position: relative; display: inline-flex; flex: 1; min-width: 200px; }
+.pass-field input { flex: 1; min-width: 0; padding-right: 56px; }
+.pass-field .link-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
+
+/* The picked month or year, in words, under the Income & spending chart */
+.flow-summary { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 12px 0 0; font-size: 14px; color: var(--text-2); }
+.flow-summary b { color: var(--text); font-weight: 600; }
+
+/* First screen and help */
+.welcome .login-icon { border-radius: 18px; margin-bottom: 8px; }
+.start-options .card { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.start-options h2 { margin: 0; }
+.start-options p { margin: 0; }
+.help-link { font-size: 14px; color: var(--accent); text-decoration: none; }
+.help-link:hover { text-decoration: underline; }
+.faq-card details { border-top: 1px solid var(--border); padding: 10px 0; }
+.faq-card summary { cursor: pointer; font-weight: 500; color: var(--text); }
+.faq-card details p { margin: 8px 0 0; color: var(--text-2); font-size: 14px; }

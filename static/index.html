@@ -2,10 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Penny</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- On an iPhone, "Add to Home Screen" makes Penny open like an app. -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Penny">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <script src="/static/vendor/chart.umd.js"></script>  <!-- Chart.js 4.4.1, bundled so nothing loads from the internet -->
 </head>
 <body>
   <header class="topbar">
@@ -21,7 +27,8 @@
     </nav>
     <div class="sync">
       <span id="last-sync" class="muted"></span>
-      <button id="sync-btn" class="btn small" hidden>Sync</button>
+      <a href="#settings/help" class="help-link">Help</a>
+      <button id="sync-btn" class="btn small" hidden title="Fetch your newest transactions and balances from SimpleFIN">Sync</button>
       <button id="stop-btn" class="btn small danger" title="Penny keeps running in the background after you close this tab, so it opens instantly next time. This stops it. Opening the Penny app starts it again.">Stop Penny</button>
     </div>
   </header>
@@ -30,19 +37,38 @@
     <!-- Shown when no data exists yet -->
     <section id="view-welcome" class="view" hidden>
       <div class="card welcome">
+        <img src="/static/icons/apple-touch-icon.png" alt="" width="80" height="80" class="login-icon">
         <h1>Welcome to Penny</h1>
-        <p>Track your subscriptions, spending and net worth. Your data stays on this computer.</p>
-        <div class="row">
-          <a class="btn" href="#settings">Connect your bank</a>
+        <p>Penny shows where your money goes, the subscriptions and bills that charge you, and what you're worth,
+           using your own bank and card transactions.</p>
+        <p class="muted">Everything stays on this Mac. Nothing is sent anywhere except the requests that fetch your bank data.</p>
+      </div>
+      <div class="grid-2 start-options">
+        <div class="card">
+          <h2>Look around first</h2>
+          <p class="muted">Load a year of made-up transactions to see what Penny does. No sign-up. When you connect your bank later, they're cleared away.</p>
           <button class="btn secondary" data-action="demo">Try with demo data</button>
+        </div>
+        <div class="card">
+          <h2>Use your own money</h2>
+          <p class="muted">Penny reads your transactions through <b>SimpleFIN Bridge</b>, about $15 a year. Setup takes about 10 minutes,
+             and Penny walks you through it. You never type your bank password into Penny.</p>
+          <a class="btn" href="#settings/connect">Connect your bank</a>
+          <p class="muted hint">Prefer not to? You can import CSV files you download from your bank instead, under
+             <a href="#settings/import-card">Import older transactions</a>.</p>
         </div>
       </div>
     </section>
 
     <div id="update-banner" class="card notice" hidden></div>
+    <div id="demo-banner" class="card notice" hidden>
+      <div><b>You're looking at demo data.</b> These are made-up transactions to explore with. Connecting your bank replaces them.</div>
+      <a class="btn small" href="#settings/connect">Connect your bank</a>
+    </div>
 
     <section id="view-dashboard" class="view" hidden>
       <div id="guide" class="card guide" hidden></div>
+      <div class="tip" data-tip="dashboard" hidden><span class="tip-label">Tip</span><p>Pick a month or a whole year at the top; everything on this page follows. Tap a bar, a slice or a category to see the transactions behind it. Transfers between your own accounts and credit card payments don't count as spending.</p><button class="link-btn" data-tip-dismiss="dashboard">Got it</button></div>
       <div class="period-bar">
         <h1 id="period-title"></h1>
         <div class="period-controls">
@@ -75,6 +101,7 @@
           </div>
         </div>
         <div class="chart-box"><canvas id="chart-monthly" aria-label="Income and spending bar chart"></canvas></div>
+        <p class="flow-summary" id="flow-summary" aria-live="polite"></p>
         <p class="muted hint" id="flow-hint"></p>
       </div>
 
@@ -367,6 +394,99 @@
         <label class="check"><input type="checkbox" id="updates-on"> Tell me when a new version of Penny is out</label>
         <p class="muted hint">Once a day, Penny asks GitHub whether there's a newer version. Nothing about you or your money is sent.</p>
         <div class="row"><button class="btn secondary small" id="update-check">Check now</button><span id="update-msg" class="msg"></span></div>
+      </div>
+      <div class="card" id="share-card" hidden>
+        <div class="card-head"><h2>Use Penny on your iPhone</h2><span class="muted" id="share-state"></span></div>
+        <p class="muted">
+          Your iPhone can open Penny from this Mac through <b>NordVPN Meshnet</b> (or Tailscale), a private network
+          of only your own devices. Penny is never put on the internet or your Wi-Fi network, every other device needs
+          your passcode, and the phone can't change sharing, your bank connection or backups.
+          It's off until you turn it on, and Penny on this Mac works the same either way.
+        </p>
+        <ol class="steps walkthrough">
+          <li>
+            <b>This Mac's Meshnet address.</b> Pick the one NordVPN shows for this Mac on its Meshnet screen.
+            <div id="share-addresses"></div>
+          </li>
+          <li>
+            <b>A passcode</b> (8 or more characters) for signing in on your phone.
+            <form id="share-pass-form" class="row">
+              <span class="pass-field">
+                <input id="share-pass" type="password" autocomplete="new-password" minlength="8" placeholder="New passcode" required>
+                <button class="link-btn" type="button" data-show-pass="share-pass" aria-pressed="false">Show</button>
+              </span>
+              <button class="btn small secondary" type="submit">Save passcode</button>
+            </form>
+            <span class="muted hint" id="share-pass-state"></span>
+          </li>
+          <li>
+            <b>Turn it on.</b>
+            <label class="check"><input type="checkbox" id="share-on"> Let my other devices use Penny</label>
+            <label class="check"><input type="checkbox" id="share-awake"> Keep this Mac awake while it's plugged in, so my phone can reach it</label>
+          </li>
+        </ol>
+        <div id="share-ready" hidden>
+          <h3>On your iPhone</h3>
+          <div class="share-ready">
+            <div id="share-qr" class="share-qr" aria-label="QR code for Penny's address"></div>
+            <ol class="steps">
+              <li>Make sure Meshnet is on in NordVPN on your iPhone.</li>
+              <li>Point the Camera at this code and tap the link, or type <b id="share-url"></b> in Safari.</li>
+              <li>Sign in with your passcode.</li>
+              <li>Tap <b>Share</b> → <b>Add to Home Screen</b>. Open Penny from there and sign in once more.</li>
+            </ol>
+          </div>
+        </div>
+        <p id="share-msg" class="msg"></p>
+        <div class="row"><button class="btn small secondary" id="share-signout" hidden>Sign out all devices</button></div>
+      </div>
+      <div class="card" id="phone-card" hidden>
+        <h2>This device</h2>
+        <p class="muted">You're using Penny from your Mac over Meshnet. Sharing, your bank connection and backups can only be changed on the Mac.</p>
+        <button class="btn small secondary" id="phone-signout">Sign out on this device</button>
+      </div>
+      <div class="card faq-card" id="help">
+        <h2>Help</h2>
+        <p class="muted">Tap a question to see the answer.</p>
+        <details><summary>Where is my data, and who can see it?</summary>
+          <p>Only you. Everything is stored on this Mac, in <b>~/Library/Application Support/Penny</b>, with automatic backups next to it.
+             Penny sends nothing anywhere except the requests that fetch your bank data from SimpleFIN, and a once-a-day check
+             for new versions (Settings → Updates; it can be turned off).</p></details>
+        <details><summary>Is my bank password safe?</summary>
+          <p>You never type it into Penny. You sign in to your bank on SimpleFIN's website, and SimpleFIN gives Penny
+             read-only access: it can see balances and transactions but can't move money.</p></details>
+        <details><summary>How do I get my newest transactions?</summary>
+          <p>Click <b>Sync</b> in the top bar. SimpleFIN allows about 24 syncs a day, so a few a day is plenty.
+             The first sync brings in about the last 90 days; for older history, download CSV files from your bank and use
+             <a href="#settings/import-card">Import older transactions</a>.</p></details>
+        <details><summary>A transaction is in the wrong category. How do I fix it?</summary>
+          <p>Pick the right category for it on the <a href="#review">Review</a> or <a href="#transactions">Transactions</a> page.
+             That changes just that purchase. To change every purchase from that place, click <b>Use for all</b> under it,
+             or set the merchant's category on the <a href="#merchants">Merchants</a> page. Penny remembers for future transactions too.</p></details>
+        <details><summary>What is the Review page for?</summary>
+          <p>It's an inbox for new transactions. Each one waits there until you've checked its category: click <b>✓</b> if it's right,
+             or pick a better one. It starts with the last 30 days; older transactions count as already checked.</p></details>
+        <details><summary>Why isn't one of my subscriptions showing?</summary>
+          <p>Penny finds a subscription once it has charged 2 or 3 times on a regular schedule for about the same amount.
+             If a company shows up under different names (like "Northwind" and "Northwind Billing"), combine them on the
+             Merchants page with <b>Combine…</b>. Check the <b>Hidden</b> list on Subscriptions too, in case it was hidden.</p></details>
+        <details><summary>What does "pending" mean?</summary>
+          <p>Your bank hasn't finished processing that charge. Its amount can still change (restaurants add the tip later).
+             Penny keeps your checkmarks and categories when it does.</p></details>
+        <details><summary>Why doesn't paying my credit card count as spending?</summary>
+          <p>The purchases on the card already counted when you made them, so counting the payment too would count them twice.
+             Moving money between your own accounts (Transfers) and into investments isn't spending either.</p></details>
+        <details><summary>Is the net worth history exact?</summary>
+          <p>From your first sync on, yes. Before that, Penny works it out backward from your transactions, and for brokerages
+             and crypto wallets from the deposits it sees going into them, so older points are close estimates.</p></details>
+        <details><summary>Can I use Penny on my iPhone?</summary>
+          <p>Yes, through NordVPN Meshnet or Tailscale, which connect only your own devices. Set it up under
+             <a href="#settings/share-card">Use Penny on your iPhone</a>. Your Mac needs to be on and awake for the phone to reach it.</p></details>
+        <details><summary>How do I get a newer version of Penny?</summary>
+          <p>Open the new <b>Penny .dmg</b> and drag Penny onto Applications, choosing Replace. Your data stays where it is.</p></details>
+        <details><summary>Something went wrong. Can I undo it?</summary>
+          <p>Penny backs up your data every day and right before anything big, like deleting data or restoring.
+             Under <b>Your data → Restore a backup</b>, pick a time to go back to; your current data is backed up first, so even that can be undone.</p></details>
       </div>
     </section>
   </main>

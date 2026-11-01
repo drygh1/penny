@@ -26,23 +26,25 @@ def import_real_account(client):
 
 def test_checklist_ticks_off_from_what_you_do(client):
     assert steps(client) == {"demo": False, "connect": False, "import": False,
-                             "categories": False, "subscriptions": False}
+                             "categories": False, "subscriptions": False, "review": False, "phone": False}
 
     # Poking around the demo only counts for the demo step.
     client.post("/api/demo")
     client.post("/api/guide/seen", json={"view": "subscriptions"})
     client.post("/api/guide/seen", json={"view": "merchants"})
+    client.post("/api/guide/seen", json={"view": "review"})
     assert steps(client) == {"demo": True, "connect": False, "import": False,
-                             "categories": False, "subscriptions": False}
+                             "categories": False, "subscriptions": False, "review": False, "phone": False}
 
     client.post("/api/delete-all-data")
     import_real_account(client)
     assert steps(client) | {"demo": True} == {"demo": True, "connect": True, "import": True,
-                                              "categories": False, "subscriptions": False}
+                                              "categories": False, "subscriptions": False, "review": False, "phone": False}
     client.post("/api/guide/seen", json={"view": "subscriptions"})
+    client.post("/api/guide/seen", json={"view": "review"})
     merchant = client.get("/api/merchants").json()[0]["merchant"]
     client.put("/api/merchant-rules", json={"merchant": merchant, "category": "Groceries"})
-    assert all(steps(client).values())
+    assert all(v for k, v in steps(client).items() if k != "phone")  # the phone step is optional
 
 
 def test_hiding_the_checklist_and_tips(client):

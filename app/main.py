@@ -28,10 +28,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import backup, db, demo, importer, pdf_statements, simplefin, subscriptions
+from . import auth, backup, db, demo, importer, pdf_statements, remote, simplefin, subscriptions
 from .categorize import (COLOR_SLOTS, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
                          institution_words, normalize_merchant)
-from .sync import (match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
+from .sync import (card_money_in, match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
                    upsert_transaction)
 
 # Inside the Mac app (PyInstaller), bundled files sit under sys._MEIPASS.
@@ -46,30 +46,78 @@ async def lifespan(app):
         backup_if_real(conn)
     finally:
         conn.close()
+    remote.start_watcher(app)  # does nothing unless sharing is turned on in Settings
     yield
+    remote.stop()
 
 
 app = FastAPI(title="Penny", lifespan=lifespan)
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+LOCAL_CLIENTS = {"127.0.0.1", "::1"}
+# What a signed-out device may load: the sign-in page and the files it needs.
+SIGN_IN_PATHS = {"/login", "/api/login", "/manifest.webmanifest"}
+# Things only this Mac can do, even for a signed-in phone: anything that changes
+# sharing, your bank connection or backups, or deletes everything.
+MAC_ONLY = ("/api/remote", "/api/simplefin", "/api/disconnect", "/api/delete-all-data",
+            "/api/backups", "/api/shutdown", "/api/demo")
+SECURITY_HEADERS = {
+    # Only Penny's own scripts run, and the page can only talk to Penny, so even
+    # injected code couldn't send your data anywhere. Styles allow inline
+    # style="" (bar widths, colors); images allow data:/blob: for picture uploads.
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; "
+                               "base-uri 'none'; form-action 'self'; object-src 'none'",
+    "X-Frame-Options": "DENY",            # no other page can show Penny inside itself
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def is_local(request: Request) -> bool:
+    return (request.client.host if request.client else "") in LOCAL_CLIENTS
 
 
 @app.middleware("http")
-async def only_local_pages(request: Request, call_next):
-    """Block other websites from using Penny's API through your browser.
+async def guard(request: Request, call_next):
+    """Who may use Penny.
 
-    The Host check stops DNS-rebinding tricks. The Origin check stops a page on
-    another site from sending changes like "delete all data" to this server.
+    From this Mac: only pages Penny itself serves. The Host check stops
+    DNS-rebinding tricks; the Origin check stops a page on another site from
+    sending changes like "delete all data".
+
+    From another device (only possible with sharing on, see remote.py): the
+    same checks against the shared address, then a signed-in session, and
+    never the Mac-only actions. Its data is never cached on the device.
     """
     host = (request.headers.get("host") or "").rsplit(":", 1)[0]
-    if host not in LOCAL_HOSTS:
-        return JSONResponse({"detail": "Forbidden host"}, status_code=403)
     origin = request.headers.get("origin")
-    if request.method not in ("GET", "HEAD") and origin and urlsplit(origin).hostname not in LOCAL_HOSTS:
+    path = request.url.path
+    local = is_local(request)
+    allowed = LOCAL_HOSTS if local else remote.allowed_hosts()
+    if host not in allowed:
+        return JSONResponse({"detail": "Forbidden host"}, status_code=403)
+    if request.method not in ("GET", "HEAD") and origin and urlsplit(origin).hostname not in allowed:
         return JSONResponse({"detail": "Forbidden origin"}, status_code=403)
+    if not local:
+        if path.startswith(MAC_ONLY):
+            return JSONResponse({"detail": "That can only be done on the Mac running Penny."}, status_code=403)
+        if path not in SIGN_IN_PATHS and not path.startswith("/static/"):
+            conn = db.connect()
+            try:
+                signed_in = auth.valid_session(conn, request.cookies.get(auth.COOKIE))
+            finally:
+                conn.close()
+            if not signed_in:
+                if path.startswith("/api/"):
+                    return JSONResponse({"detail": "Sign in first."}, status_code=401)
+                return Response(status_code=303, headers={"Location": "/login"})
     response = await call_next(request)
-    if request.url.path.startswith("/static/"):
+    response.headers.update(SECURITY_HEADERS)
+    if path.startswith("/static/"):
         response.headers.update(NO_CACHE)
+    elif not local:
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 # `merchant` is the combined merchant (see merchant_aliases); rules, logos and
@@ -121,15 +169,117 @@ class ConnectBody(BaseModel):
 
 
 @app.get("/api/status")
-def status(conn=Depends(get_conn)):
+def status(request: Request, conn=Depends(get_conn)):
     last = db.get_setting(conn, "last_sync")
     return {
         "mode": db.get_setting(conn, "mode"),  # None, "demo", or "simplefin"
         "connected": db.get_setting(conn, "simplefin_access_url") is not None,
         "last_sync": datetime.fromtimestamp(int(last)).isoformat() if last else None,
         "desktop": DESKTOP,  # the Mac app stops when you quit it, so it has no Stop button
+        "remote": not is_local(request),  # on a phone over Meshnet: Mac-only controls are hidden
         "to_review": conn.execute(f"SELECT COUNT(*) FROM ({TX_SELECT}) WHERE NOT reviewed").fetchone()[0],
     }
+
+
+# ---------- using Penny from other devices (see remote.py and auth.py) ----------
+
+class LoginBody(BaseModel):
+    passcode: str
+
+
+@app.post("/api/login")
+def login(body: LoginBody, request: Request, conn=Depends(get_conn)):
+    client = request.client.host if request.client else "?"
+    if auth.locked_out(client):
+        raise HTTPException(429, "Too many wrong passcodes. Wait 15 minutes and try again.")
+    if not auth.check_passcode(conn, body.passcode):
+        auth.note_failure(client)
+        raise HTTPException(401, "That passcode isn't right.")
+    with conn:
+        token = auth.new_session(conn, request.headers.get("user-agent", ""))
+    response = JSONResponse({"ok": True})
+    # Served over Meshnet/Tailscale, which encrypt the connection; HttpOnly keeps
+    # page scripts from reading it, SameSite=Strict keeps other sites from using it.
+    response.set_cookie(auth.COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True,
+                        samesite="strict", path="/")
+    return response
+
+
+@app.post("/api/logout")
+def logout(request: Request, conn=Depends(get_conn)):
+    with conn:
+        auth.end_session(conn, request.cookies.get(auth.COOKIE))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(auth.COOKIE, path="/")
+    return response
+
+
+@app.get("/api/remote")
+def remote_status(conn=Depends(get_conn)):
+    return remote.status(conn)
+
+
+class RemoteBody(BaseModel):
+    enabled: bool | None = None
+    address: str | None = None
+    passcode: str | None = None
+    keep_awake: bool | None = None
+
+
+@app.post("/api/remote")
+def remote_settings(body: RemoteBody, conn=Depends(get_conn)):
+    with conn:
+        if body.address is not None:
+            if body.address not in remote.private_addresses():
+                fail(Exception("That address isn't on this Mac right now. Is Meshnet on?"))
+            db.set_setting(conn, "remote_address", body.address)
+        if body.passcode is not None:
+            try:
+                auth.set_passcode(conn, body.passcode)
+            except ValueError as e:
+                fail(e)
+        if body.keep_awake is not None:
+            db.set_setting(conn, "remote_keep_awake", "1" if body.keep_awake else "0")
+        if body.enabled is not None:
+            if body.enabled and not (db.get_setting(conn, "remote_address") and db.get_setting(conn, "remote_passcode")):
+                fail(Exception("Choose the address and set a passcode first."))
+            db.set_setting(conn, "remote_enabled", "1" if body.enabled else None)
+    remote.refresh()
+    return remote.status(conn)
+
+
+@app.post("/api/remote/sign-out-all")
+def remote_sign_out_all(conn=Depends(get_conn)):
+    with conn:
+        auth.sign_out_all(conn)
+    return {"ok": True}
+
+
+@app.get("/api/remote/qr")
+def remote_qr():
+    """The sharing address as a QR code, for the iPhone's camera."""
+    import segno
+    link = remote.url()
+    if not link:
+        fail(Exception("Sharing isn't on."))
+    svg = segno.make(link, error="m").svg_inline(scale=5, dark="#1a1a19", light="#ffffff", border=2)
+    return Response(svg, media_type="image/svg+xml")
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(STATIC / "login.html", headers=NO_CACHE)
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    """Lets an iPhone add Penny to its Home Screen as an app."""
+    return JSONResponse({
+        "name": "Penny", "short_name": "Penny", "start_url": "/", "scope": "/", "display": "standalone",
+        "background_color": "#fcfcfb", "theme_color": "#fcfcfb",
+        "icons": [{"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                  {"src": "/static/icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}],
+    }, media_type="application/manifest+json")
 
 
 @app.post("/api/simplefin/connect")
@@ -188,7 +338,7 @@ def load_demo(conn=Depends(get_conn)):
 # Steps tick themselves off from what you've done; visits count only once real
 # data is in, so poking around the demo doesn't check anything off.
 
-GUIDE_VIEWS = ("review", "subscriptions", "transactions", "merchants", "accounts")
+GUIDE_VIEWS = ("dashboard", "review", "subscriptions", "transactions", "merchants", "accounts")
 
 
 @app.get("/api/guide")
@@ -205,6 +355,10 @@ def guide(conn=Depends(get_conn)):
         {"id": "import", "optional": True, "done": imported is not None},
         {"id": "categories", "optional": False, "done": edited or seen("merchants")},
         {"id": "subscriptions", "optional": False, "done": seen("subscriptions")},
+        {"id": "review", "optional": False,
+         "done": real and (seen("review") or any_rows("reviewed"))},
+        {"id": "phone", "optional": True,
+         "done": any_rows("remote_sessions") or db.get_setting(conn, "remote_enabled") == "1"},
     ]
     return {
         "steps": steps,
@@ -1094,6 +1248,7 @@ def import_csv(body: ImportBody, conn=Depends(get_conn)):
         for tx in importer.to_simplefin_shape(txs, affects_balance):
             upsert_transaction(conn, account_id, tx)
         importer.drop_overlap(conn, account_id)
+        card_money_in(conn)
         match_transfers(conn)
         after = conn.execute("SELECT COUNT(*) FROM transactions WHERE account_id = ? AND id LIKE ?",
                              (account_id, f"{account_id}:csv:%")).fetchone()[0]

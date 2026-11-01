@@ -79,6 +79,35 @@ build_one() {
   mkdir -p "$stage"
   cp -R "$app" "$stage/"
   ln -s /Applications "$stage/Applications"
+  # What a friend sees next to the app before opening anything.
+  cat > "$stage/How to install Penny.txt" <<NOTE
+How to install Penny
+====================
+
+1. Drag Penny onto the Applications folder in this window.
+2. Open Penny from Applications (or Launchpad, or Spotlight: Command-Space, type Penny).
+
+If macOS says Penny can't be opened, or that Apple couldn't check it for malware
+--------------------------------------------------------------------------------
+That's because Penny isn't signed with a paid Apple developer account. It's a one-time step:
+
+  a. Click Done (not Move to Trash).
+  b. Open System Settings, then Privacy & Security.
+  c. Scroll down to Security and click Open Anyway next to Penny, then confirm.
+
+Penny opens normally from then on.
+
+Is this the right version for your Mac?
+---------------------------------------
+This copy is for $([ "$arch" = arm64 ] && echo "Macs with Apple chips (M1, M2, M3 and later)" || echo "Macs with Intel processors").
+To check yours: Apple menu, then About This Mac. "Chip: Apple M..." means Apple chip;
+"Processor: ... Intel" means Intel. If it doesn't match, ask for the other version.
+
+Once Penny is open, it walks you through everything else: trying it with demo data,
+connecting your bank, and the rest. There's also a Help button at the top of the window.
+
+Your data stays on your Mac. Penny $VERSION.
+NOTE
   hdiutil create -quiet -volname Penny -srcfolder "$stage" -ov -format UDZO "dist/Penny-$VERSION-$label.dmg"
   echo "Built dist/Penny-$VERSION-$label.dmg"
 }

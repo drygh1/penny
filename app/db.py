@@ -86,6 +86,15 @@ CREATE TABLE IF NOT EXISTS reviewed (
     reviewed_at INTEGER NOT NULL
 );
 
+-- Devices signed in to use Penny over Meshnet/Tailscale (see auth.py). Only a
+-- hash of each device's token is kept.
+CREATE TABLE IF NOT EXISTS remote_sessions (
+    token_hash TEXT PRIMARY KEY,
+    created    INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL,
+    device     TEXT
+);
+
 -- Profile pictures for merchants, resized in the browser before upload.
 CREATE TABLE IF NOT EXISTS merchant_logos (
     merchant TEXT PRIMARY KEY,

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Penny</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Penny">
+</head>
+<body>
+  <main>
+    <div class="card welcome login">
+      <img src="/static/icons/apple-touch-icon.png" alt="" width="72" height="72" class="login-icon">
+      <h1>Penny</h1>
+      <p>Enter the passcode you set on your Mac.</p>
+      <form id="login-form" class="row">
+        <span class="pass-field">
+          <input id="passcode" type="password" autocomplete="current-password" placeholder="Passcode" required autofocus>
+          <button class="link-btn" type="button" data-show-pass="passcode" aria-pressed="false">Show</button>
+        </span>
+        <button class="btn" type="submit">Sign in</button>
+      </form>
+      <p id="login-msg" class="msg"></p>
+    </div>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

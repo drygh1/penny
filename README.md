@@ -165,6 +165,7 @@ Add or delete categories under **Settings → Categories**.
 - When you delete a category, you choose where its transactions go. Merchant rules pointing to it move too. Future transactions that would have landed in it go to the new category.
 - Income, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Transfers, Credit Card Payments and Investments. Paying off a card isn't spending, because the purchases on it already counted. Money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved. Other catches anything unmatched.
 - **Credit Card Payments** are recognized from a card issuer's name plus a payment word in checking ("CAPITAL ONE ... ONLINE PMT", "CITI CARD E-PAYMENT"), payment wording on the card itself, and matching amounts moving between your accounts.
+- **Money arriving on a credit card is never income.** On an account that owes money, anything mentioning a payment (like a pending "PENDING PAYMENT" or "ONLINE/MOBILE RECURRING") is a Credit Card Payment, and anything else is a refund that takes the category the merchant's purchases usually have.
 - Every category gets its own color, from 20 colors ordered so neighbors stay distinct for colorblind readers too. Deleting a category frees its color for the next one you add; only past 20 categories does one show in gray.
 - A new category starts empty. Use the **Merchants** page to assign merchants to it.
 

@@ -221,6 +221,34 @@ def keeping_marks(conn):
                          (target, s["category"]))
 
 
+_PAYMENT_WORDS = re.compile(r"(?<![a-z])(payment|pmt|pymt|autopay)", re.I)
+
+
+def card_money_in(conn) -> int:
+    """Money arriving on a credit card is never income.
+
+    It's a payment toward the card (Bank of America's pending ones say only
+    "PENDING PAYMENT") or a refund. On accounts that owe money (a negative
+    balance), anything that was going to count as income becomes a Credit Card
+    Payment if it mentions a payment. Otherwise it's a refund: it takes the
+    category the merchant's purchases usually have (a ferry refund goes under
+    Travel), or Other, so it offsets that spending. Categories you chose still win.
+    """
+    rows = conn.execute("""
+        SELECT t.id, t.description, t.merchant FROM transactions t JOIN accounts a ON a.id = t.account_id
+        WHERE a.balance < 0 AND t.amount > 0 AND t.category = 'Income'""").fetchall()
+    usual = {}
+    for r in conn.execute("""
+            SELECT merchant, category, COUNT(*) AS n FROM transactions
+            WHERE amount < 0 AND category NOT IN ('Income', 'Transfers', 'Credit Card Payments', 'Investments')
+            GROUP BY merchant, category ORDER BY n"""):
+        usual[r["merchant"]] = r["category"]  # ordered by count, so the most common one ends up last
+    updates = [("Credit Card Payments" if _PAYMENT_WORDS.search(r["description"]) else usual.get(r["merchant"], "Other"),
+                r["id"]) for r in rows]
+    conn.executemany("UPDATE transactions SET category = ? WHERE id = ?", updates)
+    return len(updates)
+
+
 def refresh_categories(conn):
     """Fix purchase dates, drop overlapping imports, re-run keyword categories,
     then pair transfers between accounts."""
@@ -230,6 +258,7 @@ def refresh_categories(conn):
             importer.drop_overlap(conn, account_id)
     recategorize_all(conn)
     with conn:
+        card_money_in(conn)
         match_transfers(conn)
 
 
@@ -285,6 +314,7 @@ def sync(conn) -> dict:
             # Imported CSV history may overlap what SimpleFIN just returned.
             for account_id in seen_accounts:
                 importer.drop_overlap(conn, account_id)
+        card_money_in(conn)
         match_transfers(conn)
         snapshot_balances(conn)
         db.set_setting(conn, "last_sync", now)
