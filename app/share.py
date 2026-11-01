@@ -24,7 +24,8 @@ MIN_MARKER = 6  # shorter account names ("Visa") are too common to mean anything
 
 
 def your_details() -> list[bytes]:
-    """Things only your data has: account IDs, account names, the SimpleFIN key."""
+    """Things only your data has: account IDs, account names, the SimpleFIN key,
+    and the Meshnet/Tailscale address you share Penny on."""
     path = db.DB_PATH
     if not path.exists():
         return []
@@ -34,6 +35,9 @@ def your_details() -> list[bytes]:
         found = set()
         for row in conn.execute("SELECT id, name, nickname FROM accounts"):
             found.update(v for v in row if v and len(v) >= MIN_MARKER)
+        address = conn.execute("SELECT value FROM settings WHERE key = 'remote_address'").fetchone()
+        if address and address[0]:
+            found.add(address[0])
         key = conn.execute("SELECT value FROM settings WHERE key = 'simplefin_access_url'").fetchone()
         if key and key[0]:
             found.add(key[0])

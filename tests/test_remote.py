@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-MESH = "100.101.102.103"  # this Mac's Meshnet address
+MESH = "100.101.102.103"  # a made-up Meshnet address for this Mac
 PHONE = ("100.90.1.2", 50123)
 
 
@@ -137,7 +137,8 @@ def test_copies_for_friends_are_checked_for_your_data(tmp_path, monkeypatch):
     conn.executescript("""CREATE TABLE accounts (id TEXT, name TEXT, nickname TEXT);
         CREATE TABLE settings (key TEXT, value TEXT);
         INSERT INTO accounts VALUES ('ACT-00000000-test', 'Main Savings (-0043)', 'Rainy Day Fund');
-        INSERT INTO settings VALUES ('simplefin_access_url', 'https://user123:secretpass@bridge.example/simplefin');""")
+        INSERT INTO settings VALUES ('simplefin_access_url', 'https://user123:secretpass@bridge.example/simplefin');
+        INSERT INTO settings VALUES ('remote_address', '100.99.88.77');""")
     conn.commit(); conn.close()
 
     app = tmp_path / "Penny.app" / "Contents"
@@ -148,11 +149,12 @@ def test_copies_for_friends_are_checked_for_your_data(tmp_path, monkeypatch):
     leaks = {"Resources/copy.bin": real.read_bytes(),               # a database, renamed
              "Resources/notes.txt": b"Rainy Day Fund is mine",    # an account nickname
              "Resources/key.txt": b"user123:secretpass",            # the SimpleFIN key's login part
+             "Resources/where.txt": b"http://100.99.88.77:8787",    # the Meshnet address you share on
              "Resources/penny.log": b"anything"}
     for rel, data in leaks.items():
         (app / rel).write_bytes(data)
     found = " ".join(share.problems(tmp_path / "Penny.app"))
-    assert all(name in found for name in ("copy.bin", "notes.txt", "key.txt", "penny.log"))
+    assert all(name in found for name in ("copy.bin", "notes.txt", "key.txt", "where.txt", "penny.log"))
 
 
 def test_a_phone_cant_make_a_copy(setup):
