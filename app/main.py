@@ -60,7 +60,7 @@ SIGN_IN_PATHS = {"/login", "/api/login", "/manifest.webmanifest"}
 # Things only this Mac can do, even for a signed-in phone: anything that changes
 # sharing, your bank connection or backups, or deletes everything.
 MAC_ONLY = ("/api/remote", "/api/simplefin", "/api/disconnect", "/api/delete-all-data",
-            "/api/backups", "/api/shutdown", "/api/demo")
+            "/api/backups", "/api/shutdown", "/api/demo", "/api/share")
 SECURITY_HEADERS = {
     # Only Penny's own scripts run, and the page can only talk to Penny, so even
     # injected code couldn't send your data anywhere. Styles allow inline
@@ -264,6 +264,25 @@ def remote_qr():
         fail(Exception("Sharing isn't on."))
     svg = segno.make(link, error="m").svg_inline(scale=5, dark="#1a1a19", light="#ffffff", border=2)
     return Response(svg, media_type="image/svg+xml")
+
+
+@app.get("/api/share")
+def share_info():
+    from . import share
+    label, macs = share.chip()
+    return {"available": share.this_app() is not None, "macs": macs}
+
+
+@app.post("/api/share")
+def share_copy():
+    """A copy of Penny for a friend on the Desktop, checked for anything of yours first."""
+    from . import share
+    try:
+        path = share.make_friend_copy()
+    except (RuntimeError, subprocess.CalledProcessError, OSError) as e:
+        fail(Exception(str(e)))
+    subprocess.run(["open", "-R", str(path)], check=False)  # show it in Finder
+    return {"ok": True, "path": str(path), "name": path.name}
 
 
 @app.get("/login")

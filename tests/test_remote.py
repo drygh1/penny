@@ -125,3 +125,39 @@ utun4: flags=8051<UP,POINTOPOINT>
 """
     monkeypatch.setattr(remote.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": out})())
     assert remote.private_addresses() == ["100.101.102.103"]  # not Wi-Fi, not the ordinary VPN tunnel
+
+
+def test_copies_for_friends_are_checked_for_your_data(tmp_path, monkeypatch):
+    import sqlite3
+    from app import db, share
+    real = tmp_path / "data" / "penny.db"
+    real.parent.mkdir()
+    monkeypatch.setattr(db, "DB_PATH", real)
+    conn = sqlite3.connect(real)
+    conn.executescript("""CREATE TABLE accounts (id TEXT, name TEXT, nickname TEXT);
+        CREATE TABLE settings (key TEXT, value TEXT);
+        INSERT INTO accounts VALUES ('ACT-00000000-test', 'Main Savings (-0043)', 'Rainy Day Fund');
+        INSERT INTO settings VALUES ('simplefin_access_url', 'https://user123:secretpass@bridge.example/simplefin');""")
+    conn.commit(); conn.close()
+
+    app = tmp_path / "Penny.app" / "Contents"
+    (app / "Resources").mkdir(parents=True)
+    (app / "Resources" / "app.js").write_text("console.log('Penny')")
+    assert share.problems(tmp_path / "Penny.app") == []
+
+    leaks = {"Resources/copy.bin": real.read_bytes(),               # a database, renamed
+             "Resources/notes.txt": b"Rainy Day Fund is mine",    # an account nickname
+             "Resources/key.txt": b"user123:secretpass",            # the SimpleFIN key's login part
+             "Resources/penny.log": b"anything"}
+    for rel, data in leaks.items():
+        (app / rel).write_bytes(data)
+    found = " ".join(share.problems(tmp_path / "Penny.app"))
+    assert all(name in found for name in ("copy.bin", "notes.txt", "key.txt", "penny.log"))
+
+
+def test_a_phone_cant_make_a_copy(setup):
+    mac, phone, sharing = setup
+    turn_on(mac, sharing)
+    phone.post("/api/login", json={"passcode": "correct horse"})
+    assert phone.post("/api/share").status_code == 403
+    assert mac.get("/api/share").json()["available"] is False  # not the Mac app: the build script makes copies

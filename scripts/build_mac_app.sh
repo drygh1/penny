@@ -74,6 +74,13 @@ build_one() {
   # Developer ID), which Apple Silicon Macs need before they'll run the app at all.
   codesign --force --deep --sign - "$app"
 
+  # Stop if anything of yours ended up in the app: a database, a log, or your
+  # account details anywhere in any file (see app/share.py).
+  if ! "$venv/bin/python" -m app.share "$app"; then
+    echo "Not building the .dmg: the app has something of yours in it."
+    exit 1
+  fi
+
   # A disk image with an Applications shortcut to drag Penny onto.
   local stage="$BUILD/dmg-$arch"
   mkdir -p "$stage"

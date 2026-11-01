@@ -395,6 +395,20 @@
         <p class="muted hint">Once a day, Penny asks GitHub whether there's a newer version. Nothing about you or your money is sent.</p>
         <div class="row"><button class="btn secondary small" id="update-check">Check now</button><span id="update-msg" class="msg"></span></div>
       </div>
+      <div class="card" id="friend-card" hidden>
+        <h2>Share Penny with a friend</h2>
+        <p class="muted">
+          Makes a copy of the Penny app on your Desktop, ready to send by AirDrop, Messages or email.
+          It's only the app: <b>none of your data goes with it</b>. Your data lives elsewhere on this Mac, and Penny
+          checks every file in the copy for anything of yours (a database, your account names or IDs, your bank key)
+          before saving it. If it finds anything, it doesn't make the copy.
+        </p>
+        <div class="row"><button class="btn" id="friend-make">Make a copy for a friend</button></div>
+        <p class="muted hint" id="friend-macs"></p>
+        <p id="friend-msg" class="msg"></p>
+        <p class="muted hint">Only send the file this makes. Never send the <b>penny</b> project folder or anything from
+          <b>Library → Application Support → Penny</b>; those hold your data.</p>
+      </div>
       <div class="card" id="share-card" hidden>
         <div class="card-head"><h2>Use Penny on your iPhone</h2><span class="muted" id="share-state"></span></div>
         <p class="muted">

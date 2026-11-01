@@ -1500,9 +1500,27 @@ document.addEventListener("click", async (e) => {
 
 async function loadShareCard() {
   $("#share-card").hidden = status.remote;
-  if (status.remote) return;
-  renderShare(await api("/api/remote"));
+  if (status.remote) { $("#friend-card").hidden = true; return; }
+  const [remote, friend] = await Promise.all([api("/api/remote"), api("/api/share")]);
+  renderShare(remote);
+  // Only the Mac app can copy itself; running from the code, the build script makes the files.
+  $("#friend-card").hidden = !friend.available;
+  $("#friend-macs").textContent = `The copy works on ${friend.macs}, like this one.`;
 }
+
+$("#friend-make").onclick = async () => {
+  const msg = $("#friend-msg"), btn = $("#friend-make");
+  btn.disabled = true;
+  msg.className = "msg"; msg.textContent = "Making and checking the copy…";
+  try {
+    const r = await api("/api/share", { method: "POST" });
+    msg.textContent = `Checked and saved to your Desktop as "${r.name}". Send that file. It has none of your data in it.`;
+  } catch (err) {
+    msg.className = "msg error"; msg.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 function renderShare(s) {
   const addrs = [...new Set([...(s.address ? [s.address] : []), ...s.addresses])];
