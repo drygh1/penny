@@ -384,3 +384,27 @@ table.tx { width: 100%; border-collapse: collapse; }
   .guide-steps li { grid-template-columns: 28px minmax(0, 1fr); }
   .guide-steps li > .btn { grid-column: 2; justify-self: start; }
 }
+
+/* Review */
+.nav-count {
+  display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
+  background: var(--accent); color: var(--surface); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.review-row .main { min-width: 0; }
+.review-row .example { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-row .amount { min-width: 84px; }
+.review-controls { display: grid; justify-items: end; gap: 2px; }
+.review-controls select { width: 190px; }
+.review-after { font-size: 12px; }
+.review-after .link-btn { font-size: 12px; padding: 0 2px; }
+.review-ok { width: 40px; font-size: 16px; padding: 4px 0; }
+.review-done { width: 96px; font-size: 12px; }
+.review-row.checked .title { color: var(--text-2); }
+
+@media (max-width: 760px) {
+  .review-row { flex-wrap: wrap; }
+  .review-row .main { flex-basis: calc(100% - 150px); }
+  .review-controls { width: 100%; justify-items: start; padding-left: 46px; }
+  .review-controls select { width: 100%; }
+  .review-controls .m-category { width: 100%; }
+}

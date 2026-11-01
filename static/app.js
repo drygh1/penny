@@ -69,7 +69,7 @@ function avatar(merchant, name, cls = "avatar") {
 
 // ---------- routing ----------
 
-const VIEWS = ["dashboard", "subscriptions", "transactions", "merchants", "accounts", "settings"];
+const VIEWS = ["dashboard", "review", "subscriptions", "transactions", "merchants", "accounts", "settings"];
 
 // "#settings/connect" shows Settings and scrolls to the element with id "connect".
 async function route() {
@@ -81,7 +81,7 @@ async function route() {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
-  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), loadData(), loadUpdatesCard()]), dashboard: loadDashboard, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
+  const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), loadData(), loadUpdatesCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
   await Promise.all([loaders[view]?.(), hasData && loadGuide(view)]);
   if (view === "settings") showConnectState(anchor === "connect");
   if (anchor) document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -91,6 +91,7 @@ async function refreshStatus() {
   status = await api("/api/status");
   $("#sync-btn").hidden = !status.connected;
   $("#stop-btn").hidden = status.desktop;  // quitting the Mac app stops Penny
+  showReviewCount(status.to_review);
   $("#last-sync").textContent = status.mode === "demo"
     ? "Demo data"
     : status.last_sync ? `Synced ${new Date(status.last_sync).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
@@ -437,6 +438,111 @@ $("#category-bars").addEventListener("click", (e) => {
   location.hash = "transactions";
 });
 
+// ---------- review ----------
+// New transactions wait here until you check their category. ✓ confirms it;
+// picking another category changes just that purchase (and checks it), with
+// "Use for all" to change the merchant's default too.
+
+let reviewShow = "unchecked";
+let reviewRemaining = 0;
+// In "Unchecked", a row you just changed stays until you leave the page, so its
+// "Use for all" link is still there to click.
+const keepVisible = new Set();
+
+function showReviewCount(n) {
+  reviewRemaining = n;
+  const badge = $("#review-count");
+  badge.hidden = !n;
+  badge.textContent = n > 99 ? "99+" : n;
+}
+
+async function loadReview() {
+  const r = await api(`/api/review?show=${reviewShow}`);
+  if (reviewShow === "unchecked" && keepVisible.size) {
+    const recent = await api("/api/review?show=recent&limit=500");
+    const kept = recent.items.filter((t) => keepVisible.has(t.id));
+    r.items = [...kept, ...r.items.filter((t) => !keepVisible.has(t.id))].sort((a, b) => a.posted - b.posted);
+  }
+  showReviewCount(r.remaining);
+  document.querySelectorAll("[data-review-show]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.reviewShow === reviewShow));
+  $("#review-title").textContent = reviewShow === "unchecked" ? "To review" : "Last 60 days";
+  $("#review-sub").textContent = r.remaining
+    ? `${r.remaining} ${r.remaining === 1 ? "transaction" : "transactions"} not checked yet` : "All caught up";
+  $("#review-all").hidden = !r.remaining;
+  $("#review-list").innerHTML = r.items.length ? r.items.map(reviewRow).join("")
+    : `<div class="empty">${reviewShow === "unchecked"
+        ? "Nothing to review. New transactions show up here after each sync."
+        : "No transactions in the last 60 days."}</div>`;
+}
+
+function reviewRow(t) {
+  const options = categoryNames().map((c) => `<option${c === t.category ? " selected" : ""}>${esc(c)}</option>`).join("");
+  const id = esc(t.id);
+  const after = t.edited
+    ? `<div class="meta review-after">Changed for this purchase ·
+         <button class="link-btn" data-review-all-merchant="${id}" data-merchant="${esc(t.merchant)}" data-category="${esc(t.category)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}>Use for all ${esc(t.name)}</button></div>` : "";
+  const check = t.reviewed
+    ? `<button class="link-btn review-done" data-review-undo="${id}" title="Mark as not checked">Checked · Undo</button>`
+    : `<button class="btn small secondary review-ok" data-review-ok="${id}" title="The category is right">✓</button>`;
+  return `<div class="item review-row${t.reviewed ? " checked" : ""}" data-review-row="${id}">
+      ${avatar(t.merchant, t.name)}
+      <div class="main">
+        <div class="title">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}</div>
+        <div class="meta">${dayLabel(t.date)} · ${esc(t.account_name)}</div>
+        <div class="meta example">${esc(t.description)}</div>
+      </div>
+      <div class="amount ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</div>
+      <div class="review-controls">
+        <label class="m-category">${dot(t.category)}<select data-review-cat="${id}" aria-label="Category for ${esc(t.name)}">${options}</select></label>
+        ${after}
+      </div>
+      ${check}
+    </div>`;
+}
+
+document.querySelectorAll("[data-review-show]").forEach((btn) => btn.onclick = () => {
+  reviewShow = btn.dataset.reviewShow;
+  loadReview();
+});
+
+$("#review-list").addEventListener("change", async (e) => {
+  const sel = e.target.closest("[data-review-cat]");
+  if (!sel) return;
+  keepVisible.add(sel.dataset.reviewCat);
+  await api("/api/transaction-category", { method: "PUT", body: { id: sel.dataset.reviewCat, category: sel.value } });
+  loadReview();
+});
+
+$("#review-list").addEventListener("click", async (e) => {
+  const ok = e.target.closest("[data-review-ok]");
+  const undo = e.target.closest("[data-review-undo]");
+  const all = e.target.closest("[data-review-all-merchant]");
+  if (ok) {
+    const row = ok.closest("[data-review-row]");
+    if (reviewShow === "unchecked") row.remove();  // gone right away; the reload confirms it
+    await api("/api/review", { method: "POST", body: { ids: [ok.dataset.reviewOk] } });
+  } else if (undo) {
+    keepVisible.delete(undo.dataset.reviewUndo);
+    await api("/api/review", { method: "POST", body: { ids: [undo.dataset.reviewUndo], reviewed: false } });
+  } else if (all) {
+    // Same as "Use for all" on the Transactions page: the merchant's default (or
+    // the description rule that set it) takes this category, and this purchase follows it.
+    const { merchant, category, pattern, reviewAllMerchant: id } = all.dataset;
+    if (pattern) await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category } });
+    else await api("/api/merchant-rules", { method: "PUT", body: { merchant, category } });
+    await api(`/api/transaction-category?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+  } else return;
+  loadReview();
+});
+
+$("#review-all").onclick = async () => {
+  const n = reviewRemaining;
+  if (n > 20 && !confirm(`Mark all ${n} as checked? Their categories stay as they are.`)) return;
+  await api("/api/review", { method: "POST", body: { all_unchecked: true } });
+  keepVisible.clear();
+  loadReview();
+};
+
 // ---------- subscriptions ----------
 
 async function loadSubscriptions() {
@@ -563,6 +669,7 @@ $("#tx-body").addEventListener("change", async (e) => {
   if (!e.target.matches("select[data-tx-id]")) return;
   await api("/api/transaction-category", { method: "PUT", body: { id: e.target.dataset.txId, category: e.target.value } });
   loadTransactions();
+  refreshStatus();  // choosing a category checks it, so the Review count drops
 });
 $("#tx-body").addEventListener("click", async (e) => {
   const reset = e.target.closest("[data-tx-reset]");
@@ -1261,7 +1368,7 @@ const GUIDE_STEPS = {
 };
 
 async function loadGuide(view) {
-  if (["subscriptions", "transactions", "merchants", "accounts"].includes(view)) {
+  if (["review", "subscriptions", "transactions", "merchants", "accounts"].includes(view)) {
     await api("/api/guide/seen", { method: "POST", body: { view } });
   }
   const g = await api("/api/guide");

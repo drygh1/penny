@@ -12,6 +12,7 @@
     <div class="brand">Penny</div>
     <nav id="nav">
       <a href="#dashboard">Dashboard</a>
+      <a href="#review">Review <span class="nav-count" id="review-count" hidden></span></a>
       <a href="#subscriptions">Subscriptions</a>
       <a href="#transactions">Transactions</a>
       <a href="#merchants">Merchants</a>
@@ -122,6 +123,26 @@
       <div class="card">
         <div class="card-head"><h2>Coming up</h2><span class="muted">Next 30 days</span></div>
         <div id="upcoming" class="list"></div>
+      </div>
+    </section>
+
+    <section id="view-review" class="view" hidden>
+      <div class="tip" data-tip="review" hidden><span class="tip-label">Tip</span><p>New transactions wait here until you've checked them. Click <b>✓</b> if Penny got the category right, or pick a better one. A new category changes just that purchase; click <b>Use for all</b> under it to change the whole merchant.</p><button class="link-btn" data-tip-dismiss="review">Got it</button></div>
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2 id="review-title">To review</h2>
+            <span class="muted" id="review-sub"></span>
+          </div>
+          <div class="flow-tools">
+            <div class="segmented" role="group" aria-label="Show">
+              <button type="button" data-review-show="unchecked" aria-pressed="true">Unchecked</button>
+              <button type="button" data-review-show="recent" aria-pressed="false">Last 60 days</button>
+            </div>
+            <button class="btn small secondary" id="review-all">Mark all as checked</button>
+          </div>
+        </div>
+        <div id="review-list" class="list"></div>
       </div>
     </section>
 

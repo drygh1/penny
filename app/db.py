@@ -10,6 +10,7 @@ from .categorize import COLOR_SLOTS, DEFAULT_CATEGORIES, DEFAULT_COLOR_SLOTS, LA
 
 DATA_DIR = Path(os.environ.get("PENNY_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 DB_PATH = DATA_DIR / "penny.db"
+REVIEW_START_DAYS = 30
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -74,6 +75,15 @@ CREATE TABLE IF NOT EXISTS merchant_aliases (
 CREATE TABLE IF NOT EXISTS transaction_categories (
     tx_id    TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
     category TEXT NOT NULL
+);
+
+-- Transactions you've checked (or un-checked) on the Review page. Without a row
+-- here, anything posted before the review_since setting (30 days before Penny
+-- first had this) counts as checked, and anything newer doesn't.
+CREATE TABLE IF NOT EXISTS reviewed (
+    tx_id       TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+    reviewed    INTEGER NOT NULL,  -- 1 checked, 0 unchecked
+    reviewed_at INTEGER NOT NULL
 );
 
 -- Profile pictures for merchants, resized in the browser before upload.
@@ -142,6 +152,10 @@ def connect() -> sqlite3.Connection:
         conn.execute("ALTER TABLE transactions ADD COLUMN affects_balance INTEGER NOT NULL DEFAULT 1")
     if "nickname" not in {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}:
         conn.execute("ALTER TABLE accounts ADD COLUMN nickname TEXT")
+    # The Review page starts with the last 30 days; older history counts as checked.
+    if get_setting(conn, "review_since") is None:
+        with conn:
+            set_setting(conn, "review_since", int(time.time()) - REVIEW_START_DAYS * 86400)
     # The DB holds your SimpleFIN access URL, so keep it readable only by you.
     os.chmod(DB_PATH, 0o600)
     if not get_setting(conn, "categories_seeded"):

@@ -79,6 +79,8 @@ TX_SELECT = """
            COALESCE(o.category, d.category, r.category, t.category) AS category,
            COALESCE(d.category, r.category, t.category) AS default_category,
            o.category IS NOT NULL AS edited,
+           COALESCE(rv.reviewed, t.posted < COALESCE(
+               (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'review_since'), 0)) AS reviewed,
            d.pattern AS description_rule,
            strftime('%Y-%m', t.posted, 'unixepoch', 'localtime') AS month,
            COALESCE(a.nickname, a.name) AS account_name
@@ -87,6 +89,7 @@ TX_SELECT = """
           FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant) t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN transaction_categories o ON o.tx_id = t.id
+    LEFT JOIN reviewed rv ON rv.tx_id = t.id
     LEFT JOIN merchant_rules r ON r.merchant = t.merchant
     LEFT JOIN description_rules d ON d.merchant = t.merchant AND d.pattern = (
         SELECT d2.pattern FROM description_rules d2
@@ -125,6 +128,7 @@ def status(conn=Depends(get_conn)):
         "connected": db.get_setting(conn, "simplefin_access_url") is not None,
         "last_sync": datetime.fromtimestamp(int(last)).isoformat() if last else None,
         "desktop": DESKTOP,  # the Mac app stops when you quit it, so it has no Stop button
+        "to_review": conn.execute(f"SELECT COUNT(*) FROM ({TX_SELECT}) WHERE NOT reviewed").fetchone()[0],
     }
 
 
@@ -184,7 +188,7 @@ def load_demo(conn=Depends(get_conn)):
 # Steps tick themselves off from what you've done; visits count only once real
 # data is in, so poking around the demo doesn't check anything off.
 
-GUIDE_VIEWS = ("subscriptions", "transactions", "merchants", "accounts")
+GUIDE_VIEWS = ("review", "subscriptions", "transactions", "merchants", "accounts")
 
 
 @app.get("/api/guide")
@@ -691,6 +695,59 @@ def set_transaction_category(body: TransactionCategoryBody, conn=Depends(get_con
             "INSERT INTO transaction_categories (tx_id, category) VALUES (?, ?) "
             "ON CONFLICT(tx_id) DO UPDATE SET category = excluded.category",
             (body.id, body.category))
+        mark_reviewed(conn, [body.id])  # choosing a category is checking it
+    return {"ok": True}
+
+
+# ---------- review ----------
+# New transactions wait on the Review page until you've checked their category,
+# by confirming it or changing it.
+
+REVIEW_RECENT_DAYS = 60
+
+
+def mark_reviewed(conn, ids: list[str], reviewed: bool = True):
+    now = int(time.time())
+    conn.executemany("INSERT INTO reviewed (tx_id, reviewed, reviewed_at) "
+                     "SELECT id, ?, ? FROM transactions WHERE id = ? "
+                     "ON CONFLICT(tx_id) DO UPDATE SET reviewed = excluded.reviewed, reviewed_at = excluded.reviewed_at",
+                     [(int(reviewed), now, i) for i in ids])
+
+
+@app.get("/api/review")
+def review_list(show: Literal["unchecked", "recent"] = "unchecked", limit: int = 200, conn=Depends(get_conn)):
+    """Unchecked transactions (oldest first, so you work forward in time), or
+    everything from the last 60 days, checked or not (newest first)."""
+    if show == "unchecked":
+        sql = f"SELECT * FROM ({TX_SELECT}) WHERE NOT reviewed ORDER BY posted, id LIMIT ?"
+        params = (limit,)
+    else:
+        since = int(time.time()) - REVIEW_RECENT_DAYS * 86400
+        sql = f"SELECT * FROM ({TX_SELECT}) WHERE posted >= ? ORDER BY posted DESC, id LIMIT ?"
+        params = (since, limit)
+    rows = conn.execute(sql, params).fetchall()
+    remaining = conn.execute(f"SELECT COUNT(*) FROM ({TX_SELECT}) WHERE NOT reviewed").fetchone()[0]
+    return {
+        "remaining": remaining,
+        "items": [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
+                             "name": display_name(r["merchant"]), "reviewed": bool(r["reviewed"])} for r in rows],
+    }
+
+
+class ReviewBody(BaseModel):
+    ids: list[str] = []
+    reviewed: bool = True
+    all_unchecked: bool = False  # "Mark all as checked"
+
+
+@app.post("/api/review")
+def review_mark(body: ReviewBody, conn=Depends(get_conn)):
+    """Mark transactions as checked, or back to unchecked."""
+    with conn:
+        if body.all_unchecked:
+            mark_reviewed(conn, [r[0] for r in conn.execute(f"SELECT id FROM ({TX_SELECT}) WHERE NOT reviewed")])
+        else:
+            mark_reviewed(conn, body.ids, body.reviewed)
     return {"ok": True}
 
 

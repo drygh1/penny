@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, time as dtime
 
 from . import db, importer, simplefin
@@ -160,11 +161,71 @@ def match_transfers(conn) -> int:
     return len(paired) // 2
 
 
+MARK_MATCH_DAYS = 7
+TIP_RANGE = 0.3  # a pending restaurant charge can post up to 30% higher once the tip is added
+
+
+@contextmanager
+def keeping_marks(conn):
+    """Keep your checkmarks (Review) and one-purchase categories when rows are replaced.
+
+    Syncing drops pending rows and re-adds what's still pending, a pending
+    charge posts under a new ID (sometimes with a tip added), and imported
+    rows give way to the same transaction from SimpleFIN. Deleting a row
+    deletes its marks, so they're noted first and put back: on the same ID
+    if it returns, otherwise on the new row that replaced it.
+    """
+    saved = conn.execute("""
+        SELECT t.id, t.account_id, t.posted, t.amount, t.merchant, r.reviewed, r.reviewed_at, o.category
+        FROM transactions t
+        LEFT JOIN reviewed r ON r.tx_id = t.id
+        LEFT JOIN transaction_categories o ON o.tx_id = t.id
+        WHERE r.tx_id IS NOT NULL OR o.tx_id IS NOT NULL""").fetchall()
+    before = {r[0] for r in conn.execute("SELECT id FROM transactions")}
+    yield
+    now_rows = {r["id"]: r for r in conn.execute(
+        "SELECT id, account_id, posted, amount, merchant FROM transactions")}
+    claimed = set()
+
+    marked = {s["id"] for s in saved}
+
+    def replacement(s):
+        # Rows new in this sync come first. An older row can take the marks only
+        # on an exact amount and if it has none of its own: that's an imported row
+        # giving way to the same transaction from SimpleFIN.
+        def score(t):
+            if t["account_id"] != s["account_id"] or abs(t["posted"] - s["posted"]) > MARK_MATCH_DAYS * DAY:
+                return None
+            new = t["id"] not in before
+            if round(t["amount"], 2) == round(s["amount"], 2):
+                return (0 if new else 2, abs(t["posted"] - s["posted"]))
+            same_sign = (t["amount"] < 0) == (s["amount"] < 0)
+            close = abs(t["amount"] - s["amount"]) <= abs(s["amount"]) * TIP_RANGE
+            if new and t["merchant"] == s["merchant"] and same_sign and close:
+                return (1, abs(t["amount"] - s["amount"]), abs(t["posted"] - s["posted"]))
+            return None
+        options = [(sc, t["id"]) for t in now_rows.values()
+                   if t["id"] not in claimed and t["id"] not in marked and (sc := score(t)) is not None]
+        return min(options)[1] if options else None
+
+    for s in saved:
+        target = s["id"] if s["id"] in now_rows else replacement(s)
+        if target is None:
+            continue
+        claimed.add(target)
+        if s["reviewed"] is not None:
+            conn.execute("INSERT OR IGNORE INTO reviewed (tx_id, reviewed, reviewed_at) VALUES (?, ?, ?)",
+                         (target, s["reviewed"], s["reviewed_at"]))
+        if s["category"] is not None:
+            conn.execute("INSERT OR IGNORE INTO transaction_categories (tx_id, category) VALUES (?, ?)",
+                         (target, s["category"]))
+
+
 def refresh_categories(conn):
     """Fix purchase dates, drop overlapping imports, re-run keyword categories,
     then pair transfers between accounts."""
     fix_purchase_dates(conn)
-    with conn:
+    with conn, keeping_marks(conn):
         for (account_id,) in conn.execute("SELECT id FROM accounts").fetchall():
             importer.drop_overlap(conn, account_id)
     recategorize_all(conn)
@@ -208,21 +269,22 @@ def sync(conn) -> dict:
     tx_count = 0
     seen_accounts: set[str] = set()
     with conn:
-        # Pending transactions get new IDs once they post, so drop the old
-        # pending rows and let this sync re-add whatever is still pending.
-        conn.execute("DELETE FROM transactions WHERE pending = 1")
-        for data in responses:
-            errors += data.get("errors") or []
-            errors += [e.get("msg", str(e)) if isinstance(e, dict) else str(e) for e in data.get("errlist") or []]
-            for acct in data.get("accounts", []):
-                upsert_account(conn, acct)
-                seen_accounts.add(acct["id"])
-                for tx in acct.get("transactions", []):
-                    upsert_transaction(conn, acct["id"], tx)
-                    tx_count += 1
-        # Imported CSV history may overlap what SimpleFIN just returned.
-        for account_id in seen_accounts:
-            importer.drop_overlap(conn, account_id)
+        with keeping_marks(conn):
+            # Pending transactions get new IDs once they post, so drop the old
+            # pending rows and let this sync re-add whatever is still pending.
+            conn.execute("DELETE FROM transactions WHERE pending = 1")
+            for data in responses:
+                errors += data.get("errors") or []
+                errors += [e.get("msg", str(e)) if isinstance(e, dict) else str(e) for e in data.get("errlist") or []]
+                for acct in data.get("accounts", []):
+                    upsert_account(conn, acct)
+                    seen_accounts.add(acct["id"])
+                    for tx in acct.get("transactions", []):
+                        upsert_transaction(conn, acct["id"], tx)
+                        tx_count += 1
+            # Imported CSV history may overlap what SimpleFIN just returned.
+            for account_id in seen_accounts:
+                importer.drop_overlap(conn, account_id)
         match_transfers(conn)
         snapshot_balances(conn)
         db.set_setting(conn, "last_sync", now)
