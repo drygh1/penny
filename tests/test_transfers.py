@@ -112,3 +112,30 @@ def test_money_arriving_on_a_card_is_never_income(client):
     assert cats["FERRY TICKETS REFUND"] != "Income"
     month = client.get("/api/spending/monthly").json()[-1]
     assert month["income"] == 0
+
+
+def test_bank_of_america_autopay_on_the_card_is_a_card_payment(client):
+    """Some banks' autopay arrives as "ONLINE/MOBILE RECURRING" with no payment word,
+    often days before the checking side shows up to pair it with."""
+    text = "Date,Description,Amount\n" + f"{this_month:%m/%d/%Y},ONLINE/MOBILE RECURRING,1890.00\n" \
+           + f"{this_month:%m/%d/%Y},PINECREST GROCERY,-80.00\n"
+    mapping = client.post("/api/import/preview", json={"csv": text}).json()["mapping"]
+    mapping["flip"] = False
+    client.post("/api/import", json={"csv": text, "mapping": mapping,
+                                     "new_account": {"name": "Visa", "balance": -2500}})
+    assert categories_by_desc(client)["ONLINE/MOBILE RECURRING"] == "Credit Card Payments"
+    month = client.get("/api/spending/monthly").json()[-1]
+    assert month["spending"] == 80.00
+
+
+def test_chart_and_breakdown_always_agree(client):
+    """Money back that outweighs a category's spending lowers both totals the same way."""
+    new_account(client, "Checking", [(this_month, "PINECREST GROCERY", -100.00),
+                                     (this_month, "FERRY TICKETS", -50.00),
+                                     (this_month, "FERRY TICKETS REFUND", 200.00)])
+    client.put("/api/merchant-rules", json={"merchant": "ferry tickets", "category": "Travel"})
+    period = f"{this_month:%Y-%m}"
+    chart = [m for m in client.get("/api/spending/monthly").json() if m["month"] == period][0]["spending"]
+    b = client.get("/api/spending/breakdown", params={"period": period}).json()
+    assert b["total"] == chart
+    assert [c["category"] for c in b["credits"]] == ["Travel"]

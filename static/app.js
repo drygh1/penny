@@ -324,15 +324,23 @@ function colorHex(name) {
 }
 
 function renderBreakdown(b) {
-  const pct = (v) => Math.round((v / b.total) * 100);
+  // Shares are of the categories' own total; refunds that outweigh a category's
+  // spending are listed under it and subtracted, so the total matches the chart above.
+  const gross = b.categories.reduce((sum, c) => sum + c.total, 0) || 1;
+  const pct = (v) => Math.round((v / gross) * 100);
   const max = Math.max(...b.categories.map((c) => c.total), 1);
-  $("#category-bars").innerHTML = b.categories.length
+  const credits = (b.credits || []).map((c) => `
+        <div class="bar-row credit-row" data-category="${esc(c.category)}" data-month="${b.period}" title="See transactions">
+          <span class="bar-label">${dot(c.category)}Refunds and credits · ${esc(c.category)}</span>
+          <span class="bar-value">−${money(c.total)}</span>
+        </div>`).join("");
+  $("#category-bars").innerHTML = b.categories.length || credits
     ? b.categories.map((c) => `
         <div class="bar-row" data-category="${esc(c.category)}" data-month="${b.period}" title="See transactions">
           <span class="bar-label">${dot(c.category)}${esc(c.category)}</span>
           <span class="bar-value">${money(c.total)} · ${pct(c.total)}%</span>
           <div class="bar-track"><div class="bar-fill" style="width:${(c.total / max) * 100}%;background:${colorVar(c.category)}"></div></div>
-        </div>`).join("")
+        </div>`).join("") + credits
     : `<div class="empty">No spending in ${periodLabel(b.period)}.</div>`;
   const listRow = (m, meta) => itemHTML({
     title: m.name, meta, amount: money(m.total), category: m.category || null, merchant: m.merchant,
@@ -394,7 +402,7 @@ function drawDonut(b) {
   }
   $("#donut-total").textContent = fmt0.format(b.total);
   $("#donut-month").textContent = periodLabel(b.period);
-  drawDonutChart("chart-donut", slices, b.total, (s) => {
+  drawDonutChart("chart-donut", slices, slices.reduce((sum, s) => sum + s.value, 0), (s) => {
     txFilters = { month: b.period, category: s.label, q: "" };
     location.hash = "transactions";
   });

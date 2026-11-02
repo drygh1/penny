@@ -141,7 +141,10 @@ _CARD_ISSUER = re.compile(
     r"credit one|us bank card|visa|mastercard)")
 _PAYMENT_WORD = re.compile(r"(?<![a-z])(e-?payment|payment|pymt|pmt|autopay)")
 # Money arriving on a card labeled as a payment, like "BA ELECTRONIC PAYMENT".
-_PAYMENT_RECEIVED = re.compile(r"(?<![a-z])(electronic|online|mobile|internet|ach|autopay)\W*(payment|pmt|pymt)")
+# Bank of America words every card payment "ONLINE/MOBILE ...", including
+# autopay ("ONLINE/MOBILE RECURRING"), with no payment word in it.
+_PAYMENT_RECEIVED = re.compile(r"(?<![a-z])(electronic|online|mobile|internet|ach|autopay)\W*(payment|pmt|pymt)"
+                               r"|(?<![a-z])online/mobile(?![a-z])")
 _NOT_A_CARD = re.compile(r"mortgage|home loan|auto loan|purchase")
 
 

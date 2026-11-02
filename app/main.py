@@ -775,10 +775,15 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
     period = period or month or date.today().strftime("%Y-%m")
     where, params = period_filter(period)
     source = f"FROM ({TX_SELECT}) WHERE {where}"
-    by_cat = conn.execute(f"""
+    every_cat = conn.execute(f"""
         SELECT category, ROUND(-SUM(amount), 2) AS total, COUNT(*) AS count
         {source} AND {SPENDING_FILTER}
-        GROUP BY category HAVING total > 0 ORDER BY total DESC""", params).fetchall()
+        GROUP BY category ORDER BY total DESC""", params).fetchall()
+    by_cat = [r for r in every_cat if r["total"] > 0]
+    # A category where more came back than went out (refunds) can't be a slice,
+    # but it still lowers spending, so it's listed separately and counted, keeping
+    # this total the same as the Income & spending chart's.
+    credits = [dict(r) | {"total": -r["total"]} for r in every_cat if r["total"] < 0]
     by_merchant = conn.execute(f"""
         SELECT merchant, category, ROUND(-SUM(amount), 2) AS total, COUNT(*) AS count
         {source} AND {SPENDING_FILTER}
@@ -787,7 +792,7 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
         SELECT merchant, ROUND(SUM(amount), 2) AS total, COUNT(*) AS count
         {source} AND category = 'Income'
         GROUP BY merchant HAVING total > 0 ORDER BY total DESC LIMIT 10""", params).fetchall()
-    spending = round(sum(r["total"] for r in by_cat), 2)
+    spending = round(sum(r["total"] for r in by_cat) - sum(r["total"] for r in credits), 2)
     income = round(conn.execute(
         f"SELECT COALESCE(SUM(amount), 0) {source} AND category = 'Income'", params).fetchone()[0], 2)
     # Your biggest income sources of all time get a color each, so a source keeps
@@ -802,6 +807,7 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
         "income": income,
         "net": round(income - spending, 2),
         "categories": [dict(r) for r in by_cat],
+        "credits": credits,  # categories where more came back than went out
         "merchants": [dict(r) | {"name": display_name(r["merchant"])} for r in by_merchant],
         "income_sources": [dict(r) | {"name": display_name(r["merchant"]), "color_slot": income_slots.get(r["merchant"])}
                            for r in by_source],

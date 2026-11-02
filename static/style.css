@@ -449,3 +449,5 @@ table.tx { width: 100%; border-collapse: collapse; }
 .faq-card details { border-top: 1px solid var(--border); padding: 10px 0; }
 .faq-card summary { cursor: pointer; font-weight: 500; color: var(--text); }
 .faq-card details p { margin: 8px 0 0; color: var(--text-2); font-size: 14px; }
+.credit-row { border-top: 1px dashed var(--border); padding-top: 8px; }
+.credit-row .bar-label, .credit-row .bar-value { color: var(--text-2); }
