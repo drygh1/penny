@@ -13,9 +13,8 @@ Everything is stored on your own Mac. Nothing is sent anywhere except the reques
 
 Penny runs on a Mac (macOS 12.3 or later).
 
-1. Get the right file for your Mac. Check  → **About This Mac**: if it says **Chip: Apple M1** (or M2, M3…), use `Penny-1.0-apple-silicon.dmg`; if it says **Processor: Intel**, use `Penny-1.0-intel.dmg`.
-2. Open the `.dmg` and drag **Penny** onto **Applications**.
-3. Open Penny. The first time, macOS says it can't check Penny for malware, because Penny isn't signed with a paid Apple developer account. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Penny. You only do this once.
+1. Open `Penny-1.0.dmg` and drag **Penny** onto **Applications**. The same file works on every Mac, Apple chip or Intel.
+2. Open Penny. The first time, macOS says it can't check Penny for malware, because Penny isn't signed with a paid Apple developer account. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Penny. You only do this once.
 
 Penny opens in its own window. Quitting it (⌘Q) stops it completely. Your data is kept in
 `~/Library/Application Support/Penny/data`, with backups next to it in `backups`. The log is `data/penny.log` there.
@@ -26,14 +25,16 @@ until you click **Got it**.
 
 ### Building and releasing (for whoever shares Penny)
 
-`scripts/build_mac_app.sh` builds both versions: `dist/Penny-<version>-apple-silicon.dmg` and
-`dist/Penny-<version>-intel.dmg`. On an Apple Silicon Mac the Intel one is built through Rosetta
-(`softwareupdate --install-rosetta` if it's missing). Pass `arm64` or `x86_64` to build just one.
+`scripts/build_mac_app.sh` builds one universal app that runs on Apple chip and Intel Macs, and
+`dist/Penny-<version>.dmg` to send. It builds the Apple-chip half and the Intel half with the same
+Python release, then `scripts/merge_universal.py` fuses their compiled code (on an Apple Silicon Mac
+the Intel half builds through Rosetta: `softwareupdate --install-rosetta` if it's missing). Before
+making the .dmg, it checks the app for anything of yours (see Settings → Share Penny with a friend).
 
 To release a new version:
 
 1. Change `__version__` in `app/__init__.py` (for example to `"1.1"`) and run the build script.
-2. On GitHub, make a release with the tag `v1.1`, write a line or two about what changed, and attach both `.dmg` files.
+2. On GitHub, make a release with the tag `v1.1`, write a line or two about what changed, and attach the `.dmg`.
 
 Once a day the app checks the newest GitHub release and shows a **Download** notice when it's newer
 than the installed version. The check is a plain request to GitHub with nothing about you or your money in it,

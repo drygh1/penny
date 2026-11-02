@@ -1505,7 +1505,7 @@ async function loadShareCard() {
   renderShare(remote);
   // Only the Mac app can copy itself; running from the code, the build script makes the files.
   $("#friend-card").hidden = !friend.available;
-  $("#friend-macs").textContent = `The copy works on ${friend.macs}, like this one.`;
+  $("#friend-macs").textContent = `The copy works on ${friend.macs}.`;
 }
 
 $("#friend-make").onclick = async () => {

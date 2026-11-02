@@ -74,8 +74,22 @@ def this_app() -> Path | None:
     return app if app.suffix == ".app" else None
 
 
-def chip() -> tuple[str, str]:
-    return ("apple-silicon", "Macs with Apple chips (M1, M2, M3 and later)") if platform.machine() == "arm64" \
+def chips(app: Path | None = None) -> set[str]:
+    """Which Mac chips the app runs on: {"arm64", "x86_64"} for a universal app."""
+    app = app or this_app()
+    if app is None:
+        return {platform.machine()}
+    out = subprocess.run(["lipo", "-archs", str(app / "Contents" / "MacOS" / "Penny")],
+                         capture_output=True, text=True)
+    return set(out.stdout.split()) or {platform.machine()}
+
+
+def chip(app: Path | None = None) -> tuple[str, str]:
+    """A label for file names, and which Macs it works on, in words."""
+    found = chips(app)
+    if {"arm64", "x86_64"} <= found:
+        return "universal", "any Mac, with an Apple chip or an Intel processor"
+    return ("apple-silicon", "Macs with Apple chips (M1, M2, M3 and later)") if "arm64" in found \
         else ("intel", "Macs with Intel processors")
 
 
@@ -84,8 +98,10 @@ def make_friend_copy() -> Path:
     app = this_app()
     if app is None:
         raise RuntimeError("Only the Penny app can make a copy. From the code, run scripts/build_mac_app.sh.")
-    label, macs = chip()
-    out = Path.home() / "Desktop" / f"Penny {__version__} for a friend ({label}).dmg"
+    label, macs = chip(app)
+    universal = label == "universal"
+    out = Path.home() / "Desktop" / (f"Penny {__version__} for a friend.dmg" if universal
+                                     else f"Penny {__version__} for a friend ({label}).dmg")
     with tempfile.TemporaryDirectory(prefix="penny-share-") as tmp:
         stage = Path(tmp) / "Penny"
         stage.mkdir()
@@ -95,7 +111,7 @@ def make_friend_copy() -> Path:
             raise RuntimeError("Stopped: this copy has something of yours in it, so it wasn't made. "
                                + "; ".join(found[:5]))
         os.symlink("/Applications", stage / "Applications")
-        (stage / "How to install Penny.txt").write_text(install_note(macs))
+        (stage / "How to install Penny.txt").write_text(install_note(universal, macs))
         if out.exists():
             out.unlink()
         subprocess.run(["hdiutil", "create", "-quiet", "-volname", "Penny", "-srcfolder", str(stage),
@@ -103,7 +119,14 @@ def make_friend_copy() -> Path:
     return out
 
 
-def install_note(macs: str) -> str:
+def install_note(universal: bool = True, macs: str = "") -> str:
+    """The note that goes next to Penny.app in every .dmg (the build script uses it too)."""
+    which = ("This copy works on any Mac (macOS 12.3 or later), with an Apple chip or an Intel processor."
+             if universal else f"""Is this the right version for your Mac?
+---------------------------------------
+This copy is for {macs}.
+To check yours: Apple menu, then About This Mac. "Chip: Apple M..." means Apple chip;
+"Processor: ... Intel" means Intel. If it doesn't match, ask for the other version.""")
     return f"""How to install Penny
 ====================
 
@@ -120,11 +143,7 @@ That's because Penny isn't signed with a paid Apple developer account. It's a on
 
 Penny opens normally from then on.
 
-Is this the right version for your Mac?
----------------------------------------
-This copy is for {macs}.
-To check yours: Apple menu, then About This Mac. "Chip: Apple M..." means Apple chip;
-"Processor: ... Intel" means Intel. If it doesn't match, ask for the other version.
+{which}
 
 Once Penny is open, it walks you through everything else: trying it with demo data,
 connecting your bank, and the rest. There's also a Help button at the top of the window.

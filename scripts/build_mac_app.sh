@@ -1,22 +1,22 @@
 #!/bin/bash
-# Build Penny.app and a drag-to-install .dmg, with Python and everything Penny needs inside.
-# Friends drag Penny.app to Applications and open it; nothing else to install.
+# Build a universal Penny.app (Apple chips and Intel in one) and a drag-to-install
+# .dmg, with Python and everything Penny needs inside. Friends drag Penny.app to
+# Applications and open it; nothing else to install, and it doesn't matter which Mac.
 #
-#   scripts/build_mac_app.sh              both: Apple Silicon and Intel
-#   scripts/build_mac_app.sh arm64        Apple Silicon (M1 and later) only
-#   scripts/build_mac_app.sh x86_64       Intel only
+#   scripts/build_mac_app.sh
 #
-# Makes dist/Penny-<version>-apple-silicon.dmg and dist/Penny-<version>-intel.dmg.
-# The version comes from app/__init__.py. On an Apple Silicon Mac the Intel build
-# runs through Rosetta (softwareupdate --install-rosetta) with an Intel Python
-# that uv downloads.
+# Makes dist/Penny-<version>.dmg (the version comes from app/__init__.py).
+# Each half is built with the same Python release, so the two apps hold the
+# same files; scripts/merge_universal.py fuses their compiled code with lipo.
+# On an Apple Silicon Mac the Intel half builds through Rosetta
+# (softwareupdate --install-rosetta) with an Intel Python that uv downloads.
 #
 # The app isn't signed with an Apple Developer ID, so the first open needs
 # System Settings → Privacy & Security → Open Anyway.
 set -e
 cd "$(dirname "$0")/.."
 VERSION="$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' app/__init__.py)"
-ARCHES="${1:-arm64 x86_64}"
+PYTHON=3.13.14  # the same release for both halves, so their files match
 BUILD=build/mac
 
 rm -rf "$BUILD" dist
@@ -31,23 +31,17 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$BUILD/Penny.icns"
 
-build_one() {
-  local arch="$1" label venv out app
-  case "$arch" in
-    arm64) label=apple-silicon ;;
-    x86_64) label=intel ;;
-    *) echo "Unknown architecture: $arch (use arm64 or x86_64)"; exit 1 ;;
-  esac
-  # Each chip gets its own Python and packages, so every compiled piece matches it.
-  venv=".venv-build-$arch"
-  if [ ! -x "$venv/bin/pyinstaller" ]; then
-    uv python install "cpython-3.13-macos-$arch-none"
-    uv venv "$venv" --python "$(uv python find "cpython-3.13-macos-$arch-none")"
+build_half() {
+  local arch="$1" uvarch="$2"
+  local venv=".venv-build-$arch"
+  local python="cpython-$PYTHON-macos-$uvarch-none"
+  # Each half gets its own Python and packages, so every compiled piece matches its chip.
+  if [ ! -x "$venv/bin/pyinstaller" ] || ! "$venv/bin/python" -c "import platform,sys; sys.exit(platform.python_version() != '$PYTHON')"; then
+    uv python install "$python"
+    rm -rf "$venv"
+    uv venv -q "$venv" --python "$(uv python find "$python")"
   fi
   uv pip install --python "$venv" -q -r requirements-mac.txt
-
-  out="dist/$label"
-  app="$out/Penny.app"
   # uvicorn finds its pieces by name at runtime, so PyInstaller needs to be told
   # about them. Its optional speedups aren't used (see app/desktop.py), so leave them out.
   arch "-$arch" "$venv/bin/pyinstaller" penny_app.py \
@@ -60,65 +54,42 @@ build_one() {
     --hidden-import webview.platforms.cocoa \
     --exclude-module uvloop --exclude-module httptools --exclude-module watchfiles \
     --exclude-module websockets --exclude-module pytest \
-    --distpath "$out" --workpath "$BUILD/work-$arch" --specpath "$BUILD/spec-$arch" \
+    --distpath "$BUILD/$arch" --workpath "$BUILD/work-$arch" --specpath "$BUILD/spec-$arch" \
     --log-level WARN
-
-  local plist="$app/Contents/Info.plist"
-  plutil -replace CFBundleShortVersionString -string "$VERSION" "$plist"
-  plutil -replace CFBundleVersion -string "$VERSION" "$plist"
-  plutil -replace CFBundleDisplayName -string "Penny" "$plist"
-  plutil -replace NSHighResolutionCapable -bool true "$plist"
-  plutil -replace LSMinimumSystemVersion -string "12.3" "$plist"  # <dialog> needs Safari 15.4
-
-  # Changing Info.plist breaks PyInstaller's signature; sign again (ad hoc, no
-  # Developer ID), which Apple Silicon Macs need before they'll run the app at all.
-  codesign --force --deep --sign - "$app"
-
-  # Stop if anything of yours ended up in the app: a database, a log, or your
-  # account details anywhere in any file (see app/share.py).
-  if ! "$venv/bin/python" -m app.share "$app"; then
-    echo "Not building the .dmg: the app has something of yours in it."
-    exit 1
-  fi
-
-  # A disk image with an Applications shortcut to drag Penny onto.
-  local stage="$BUILD/dmg-$arch"
-  mkdir -p "$stage"
-  cp -R "$app" "$stage/"
-  ln -s /Applications "$stage/Applications"
-  # What a friend sees next to the app before opening anything.
-  cat > "$stage/How to install Penny.txt" <<NOTE
-How to install Penny
-====================
-
-1. Drag Penny onto the Applications folder in this window.
-2. Open Penny from Applications (or Launchpad, or Spotlight: Command-Space, type Penny).
-
-If macOS says Penny can't be opened, or that Apple couldn't check it for malware
---------------------------------------------------------------------------------
-That's because Penny isn't signed with a paid Apple developer account. It's a one-time step:
-
-  a. Click Done (not Move to Trash).
-  b. Open System Settings, then Privacy & Security.
-  c. Scroll down to Security and click Open Anyway next to Penny, then confirm.
-
-Penny opens normally from then on.
-
-Is this the right version for your Mac?
----------------------------------------
-This copy is for $([ "$arch" = arm64 ] && echo "Macs with Apple chips (M1, M2, M3 and later)" || echo "Macs with Intel processors").
-To check yours: Apple menu, then About This Mac. "Chip: Apple M..." means Apple chip;
-"Processor: ... Intel" means Intel. If it doesn't match, ask for the other version.
-
-Once Penny is open, it walks you through everything else: trying it with demo data,
-connecting your bank, and the rest. There's also a Help button at the top of the window.
-
-Your data stays on your Mac. Penny $VERSION.
-NOTE
-  hdiutil create -quiet -volname Penny -srcfolder "$stage" -ov -format UDZO "dist/Penny-$VERSION-$label.dmg"
-  echo "Built dist/Penny-$VERSION-$label.dmg"
 }
 
-for arch in $ARCHES; do
-  build_one "$arch"
-done
+build_half arm64 aarch64
+build_half x86_64 x86_64
+
+APP="$BUILD/universal/Penny.app"
+mkdir -p "$BUILD/universal"
+python3 scripts/merge_universal.py "$BUILD/arm64/Penny.app" "$BUILD/x86_64/Penny.app" "$APP"
+
+PLIST="$APP/Contents/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
+plutil -replace CFBundleVersion -string "$VERSION" "$PLIST"
+plutil -replace CFBundleDisplayName -string "Penny" "$PLIST"
+plutil -replace NSHighResolutionCapable -bool true "$PLIST"
+plutil -replace LSMinimumSystemVersion -string "12.3" "$PLIST"  # <dialog> needs Safari 15.4
+
+# Merging and Info.plist changes break the signatures; sign again (ad hoc, no
+# Developer ID), which Apple Silicon Macs need before they'll run the app at all.
+codesign --force --deep --sign - "$APP"
+
+# Stop if anything of yours ended up in the app: a database, a log, or your
+# account details anywhere in any file (see app/share.py).
+if ! .venv-build-arm64/bin/python -m app.share "$APP"; then
+  echo "Not building the .dmg: the app has something of yours in it."
+  exit 1
+fi
+
+# A disk image with an Applications shortcut to drag Penny onto, and the
+# same install note the in-app "Share Penny with a friend" copy has.
+STAGE="$BUILD/dmg"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+.venv-build-arm64/bin/python -c "from app import share; print(share.install_note(universal=True), end='')" \
+  > "$STAGE/How to install Penny.txt"
+hdiutil create -quiet -volname Penny -srcfolder "$STAGE" -ov -format UDZO "dist/Penny-$VERSION.dmg"
+echo "Built dist/Penny-$VERSION.dmg (works on Apple chip and Intel Macs)"
