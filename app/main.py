@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth, backup, db, demo, importer, pdf_statements, remote, simplefin, subscriptions
-from .categorize import (COLOR_SLOTS, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
+from .categorize import (COLOR_SLOTS, FIXED_NAMES, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
                          institution_words, normalize_merchant)
 from .sync import (card_money_in, match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
                    upsert_transaction)
@@ -674,6 +674,7 @@ def categories(conn=Depends(get_conn)):
         "name": r["name"],
         "color_slot": r["color_slot"],
         "locked": r["name"] in LOCKED_CATEGORIES,
+        "fixed_name": r["name"] in FIXED_NAMES,
         "transactions": counts.get(r["name"], 0),
     } for r in conn.execute("SELECT name, color_slot FROM categories ORDER BY position")]
 
@@ -699,6 +700,50 @@ def add_category(body: CategoryBody, conn=Depends(get_conn)):
         # If this name was deleted before, stop redirecting it.
         conn.execute("DELETE FROM category_aliases WHERE old_name = ?", (name,))
     return {"ok": True, "name": name}
+
+
+class CategoryRenameBody(BaseModel):
+    name: str
+    new_name: str
+
+
+def bill_categories(conn) -> set[str]:
+    """Categories that count as bills, under whatever names they have now."""
+    saved = db.get_setting(conn, "bill_categories")
+    return set(json.loads(saved)) if saved else set(subscriptions.BILL_CATEGORIES)
+
+
+@app.put("/api/categories")
+def rename_category(body: CategoryRenameBody, conn=Depends(get_conn)):
+    """Rename a category. Its transactions, rules and color come along, and
+    transactions Penny files under the old name from now on land here too."""
+    old, new = body.name, " ".join(body.new_name.split())
+    names = db.category_names(conn)
+    if old not in names:
+        fail(Exception(f"Unknown category: {old}"))
+    if old in FIXED_NAMES:
+        fail(Exception(f"{old} is built into Penny's totals, so its name can't change."))
+    if not 1 <= len(new) <= 40:
+        fail(Exception("Category names must be 1 to 40 characters."))
+    if new == old:
+        return {"ok": True, "name": new}
+    if new in FIXED_NAMES or any(n.lower() == new.lower() and n != old for n in names):
+        fail(Exception(f"There's already a category called {new}."))
+    backup_if_real(conn, "before-category-rename")
+    bills = bill_categories(conn)
+    with conn:
+        conn.execute("UPDATE categories SET name = ? WHERE name = ?", (new, old))
+        for table in ("transactions", "merchant_rules", "description_rules", "transaction_categories"):
+            conn.execute(f"UPDATE {table} SET category = ? WHERE category = ?", (new, old))
+        conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (new, old))
+        conn.execute(
+            "INSERT INTO category_aliases (old_name, new_name) VALUES (?, ?) "
+            "ON CONFLICT(old_name) DO UPDATE SET new_name = excluded.new_name", (old, new))
+        # The new name is a real category now, so nothing should redirect away from it.
+        conn.execute("DELETE FROM category_aliases WHERE old_name = ?", (new,))
+        if old in bills:
+            db.set_setting(conn, "bill_categories", json.dumps(sorted(bills - {old} | {new})))
+    return {"ok": True, "name": new}
 
 
 @app.delete("/api/categories")
@@ -1130,7 +1175,7 @@ def get_subscriptions(conn=Depends(get_conn)):
     found = subscriptions.detect(
         [dict(t) for t in txs], date.today(),
         names={t["merchant"]: display_name(t["merchant"]) for t in txs},
-        overrides=overrides, kinds=kinds)
+        overrides=overrides, kinds=kinds, bill_categories=bill_categories(conn))
     active = [s for s in found if s.active and not s.ignored]
     total = lambda items, field: round(sum(getattr(s, field) for s in items), 2)
     subs = [s for s in active if s.kind == "subscription"]

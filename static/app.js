@@ -1262,9 +1262,41 @@ async function loadCategories() {
       <span class="muted">${c.transactions} ${c.transactions === 1 ? "transaction" : "transactions"}</span>
       ${c.locked
         ? `<span class="muted locked" title="Needed for spending totals">Built in</span>`
-        : `<button class="link-btn danger-link" data-delete-category="${esc(c.name)}">Delete</button>`}
+        : `<span class="cat-actions">
+            ${c.fixed_name ? "" : `<button class="link-btn" data-rename-category="${esc(c.name)}">Rename</button>`}
+            <button class="link-btn danger-link" data-delete-category="${esc(c.name)}">Delete</button>
+          </span>`}
     </div>`).join("");
 }
+
+// Renaming swaps the row for a small form, like renaming an account.
+$("#category-rows").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-rename-category]");
+  if (!btn) return;
+  const name = btn.dataset.renameCategory;
+  const row = btn.closest(".cat-row");
+  const form = document.createElement("form");
+  form.className = "cat-rename";
+  form.innerHTML = `<input name="name" value="${esc(name)}" maxlength="40" required aria-label="New name for ${esc(name)}">
+    <button class="btn small">Save</button>
+    <button type="button" class="link-btn" data-rename-cancel>Cancel</button>`;
+  row.replaceWith(form);
+  form.name.focus();
+  form.name.select();
+  form.querySelector("[data-rename-cancel]").onclick = loadCategories;
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const msg = $("#category-msg");
+    try {
+      const res = await api("/api/categories", { method: "PUT", body: { name, new_name: form.name.value } });
+      msg.className = "msg";
+      msg.textContent = res.name === name ? "" : `Renamed ${name} to ${res.name}.`;
+      loadCategories();
+    } catch (err) {
+      msg.className = "msg error"; msg.textContent = err.message;
+    }
+  };
+});
 
 $("#add-category-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -1315,6 +1347,7 @@ const BACKUP_REASONS = {
   daily: "Daily backup", manual: "Made by you", "before-delete": "Before deleting data",
   "before-restore": "Before a restore", "before-undo-import": "Before removing an import",
   "before-category-delete": "Before deleting a category",
+  "before-category-rename": "Before renaming a category",
 };
 
 async function loadData() {

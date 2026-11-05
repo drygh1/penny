@@ -272,12 +272,16 @@ h3 { font-size: 14px; font-weight: 600; margin: 20px 0 10px; }
 #new-category { flex: 1; min-width: 200px; }
 .cat-list { display: grid; }
 .cat-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto 80px; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 124px; align-items: center; gap: 12px;
   padding: 10px 0; border-top: 1px solid var(--border);
 }
 .cat-row:first-child { border-top: 0; }
 .cat-name { display: flex; align-items: center; min-width: 0; }
-.cat-row .locked, .cat-row .danger-link { justify-self: end; }
+.cat-row .locked, .cat-actions { justify-self: end; }
+.cat-actions { display: flex; gap: 6px; }
+.cat-rename { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+.cat-rename input { flex: 1; min-width: 160px; }
+.cat-list > .cat-rename:first-child { border-top: 0; }
 .danger-link { color: var(--critical); }
 dialog {
   border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;

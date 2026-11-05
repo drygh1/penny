@@ -161,7 +161,9 @@ Transactions are dated the day you made the purchase, not the day the bank poste
 
 ## Categories
 
-Add or delete categories under **Settings → Categories**.
+Add, rename or delete categories under **Settings → Categories**.
+
+- Renaming a category keeps its transactions, rules and color, and transactions Penny would have filed under the old name land in the new one. Income, Transfers, Other, Credit Card Payments and Investments are part of Penny's totals, so their names can't change.
 
 - When you delete a category, you choose where its transactions go. Merchant rules pointing to it move too. Future transactions that would have landed in it go to the new category.
 - Income, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Transfers, Credit Card Payments and Investments. Paying off a card isn't spending, because the purchases on it already counted. Money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved. Other catches anything unmatched.

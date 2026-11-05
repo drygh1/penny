@@ -169,3 +169,56 @@ def test_combining_merchants_and_separating_them_again(client):
     after = {m["merchant"]: m for m in client.get("/api/merchants").json()}
     assert after[other]["count"] == counts[other]
     assert client.post("/api/merchants/combine", json={"merchant": keep, "others": [keep]}).status_code == 400
+
+
+def test_rename_moves_everything_and_future_transactions(client):
+    from app import db, sync
+    txs = client.get("/api/transactions", params={"category": "Groceries", "limit": 1000}).json()
+    count, slot = len(txs), cats(client)["Groceries"]["color_slot"]
+    merchant = txs[0]["merchant"]
+    client.put("/api/merchant-rules", json={"merchant": "ikea", "category": "Groceries"})
+    client.put("/api/description-rules", json={"merchant": merchant, "pattern": "kroger", "category": "Groceries"})
+    other = client.get("/api/transactions", params={"category": "Dining"}).json()[0]
+    client.put("/api/transaction-category", json={"id": other["id"], "category": "Groceries"})
+    before = cats(client)["Groceries"]["transactions"]
+
+    assert client.put("/api/categories", json={"name": "Groceries", "new_name": "  Food   at home "}).json()["name"] == "Food at home"
+    after = cats(client)
+    assert "Groceries" not in after and after["Food at home"]["transactions"] == before
+    assert after["Food at home"]["color_slot"] == slot
+    assert next(m for m in client.get("/api/merchants").json() if m["merchant"] == "ikea")["rule_category"] == "Food at home"
+    assert client.get("/api/merchant-descriptions", params={"merchant": merchant}).json()["rules"][0]["category"] == "Food at home"
+    assert next(t for t in client.get("/api/transactions", params={"limit": 5000}).json()
+                if t["id"] == other["id"])["category"] == "Food at home"
+
+    # Keywords still say "Groceries": re-running them, and new transactions, land in the new name.
+    conn = db.connect()
+    sync.recategorize_all(conn)
+    assert db.resolve_category(conn, "Groceries") == "Food at home"
+    assert "Groceries" not in {t["category"] for t in client.get("/api/transactions", params={"limit": 5000}).json()}
+
+    # Renaming again, and back again, leaves no loop behind.
+    client.put("/api/categories", json={"name": "Food at home", "new_name": "Food"})
+    assert db.resolve_category(conn, "Groceries") == "Food"
+    client.put("/api/categories", json={"name": "Food", "new_name": "Groceries"})
+    assert db.resolve_category(conn, "Groceries") == "Groceries" and db.resolve_category(conn, "Food") == "Groceries"
+
+
+def test_rename_guard_rails(client):
+    for fixed in ("Income", "Transfers", "Other", "Credit Card Payments", "Investments"):
+        assert client.put("/api/categories", json={"name": fixed, "new_name": "Something"}).status_code == 400
+        assert cats(client)[fixed]["fixed_name"]
+    assert client.put("/api/categories", json={"name": "Dining", "new_name": "groceries"}).status_code == 400
+    assert client.put("/api/categories", json={"name": "Dining", "new_name": "Income"}).status_code == 400
+    assert client.put("/api/categories", json={"name": "Dining", "new_name": "   "}).status_code == 400
+    assert client.put("/api/categories", json={"name": "Nope", "new_name": "Fine"}).status_code == 400
+    assert client.put("/api/categories", json={"name": "Dining", "new_name": "DINING"}).status_code == 200
+    assert "DINING" in cats(client)
+
+
+def test_renamed_bill_category_still_counts_as_bills(client):
+    def kinds():
+        return {s["category"]: s["kind"] for s in client.get("/api/subscriptions").json()["items"]}
+    assert kinds()["Housing"] == "bill"
+    client.put("/api/categories", json={"name": "Housing", "new_name": "Rent"})
+    assert kinds()["Rent"] == "bill"

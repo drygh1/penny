@@ -162,16 +162,18 @@ def _by_price(txs: list) -> list[tuple[str, list]]:
     return [(label, g) for label, g in groups.items() if len(g) >= 3]
 
 
-def detect(transactions, today: date, names=None, overrides=None, kinds=None) -> list[Recurring]:
+def detect(transactions, today: date, names=None, overrides=None, kinds=None, bill_categories=None) -> list[Recurring]:
     """transactions: iterable of dicts with merchant, posted (unix), amount, category
     and optionally description_rule.
 
     Only outflows (amount < 0) are considered; transfers are skipped.
     overrides and kinds are keyed by Recurring.key: "ignored", and "bill"/"subscription".
+    bill_categories replaces BILL_CATEGORIES once one of them has been renamed.
     """
     names = names or {}
     overrides = overrides or {}
     kinds = kinds or {}
+    bill_categories = BILL_CATEGORIES if bill_categories is None else bill_categories
     by_merchant: dict[str, list] = {}
     for t in transactions:
         if t["amount"] >= 0 or t["category"] in NON_SPENDING:
@@ -189,7 +191,7 @@ def detect(transactions, today: date, names=None, overrides=None, kinds=None) ->
         for r in found:
             r.name = names.get(merchant, r.name)
             r.ignored = overrides.get(r.key) == "ignored"
-            r.kind = kinds.get(r.key) or ("bill" if r.category in BILL_CATEGORIES else "subscription")
+            r.kind = kinds.get(r.key) or ("bill" if r.category in bill_categories else "subscription")
         results += found
 
     results.sort(key=lambda r: (not r.active, -r.monthly_cost))

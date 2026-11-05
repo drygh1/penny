@@ -40,6 +40,8 @@ NON_SPENDING = {"Transfers", "Credit Card Payments", "Income", "Investments"}
 # Spending math depends on Income and Transfers, and Other is the fallback,
 # so these three can't be deleted.
 LOCKED_CATEGORIES = {"Income", "Transfers", "Other"}
+# Penny's math looks these up by name, so they can't be renamed.
+FIXED_NAMES = LOCKED_CATEGORIES | NON_SPENDING
 
 # Each category gets its own color slot (see style.css): 20 colors, ordered so
 # neighbors stay distinct with colorblindness too. New categories take the
