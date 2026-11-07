@@ -65,6 +65,8 @@ def test_update_notice(client, monkeypatch):
     from app import main
     assert client.get("/api/update").json()["available"] is False  # not the Mac app: never checks
 
+    import app
+    monkeypatch.setattr(app, "__version__", "1.0")  # the installed version, so "v1.1" below is newer
     monkeypatch.setattr(main, "DESKTOP", True)
     calls = []
     release = {"tag_name": "v1.1", "html_url": "https://example.com/penny/1.1", "body": "Faster syncs"}
