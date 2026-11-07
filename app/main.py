@@ -150,6 +150,12 @@ SPENDING_FILTER = "category NOT IN ({})".format(",".join(f"'{c}'" for c in NON_S
 INCOME_COLORS = 6
 
 
+def merchant_namer(conn):
+    """Each merchant's name: yours if you renamed it, else made from the bank's wording."""
+    custom = dict(conn.execute("SELECT merchant, name FROM merchant_names").fetchall())
+    return lambda merchant: custom.get(merchant) or display_name(merchant)
+
+
 def get_conn():
     conn = db.connect()
     try:
@@ -366,7 +372,7 @@ def guide(conn=Depends(get_conn)):
     seen = lambda view: bool(db.get_setting(conn, f"guide:seen:{view}"))
     any_rows = lambda table: conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
     edited = real and any(any_rows(t) for t in ("merchant_rules", "description_rules",
-                                               "transaction_categories", "merchant_aliases"))
+                                               "transaction_categories", "merchant_aliases", "merchant_names"))
     imported = conn.execute("SELECT 1 FROM raw_archive WHERE kind IN ('csv', 'pdf') LIMIT 1").fetchone()
     steps = [
         {"id": "demo", "optional": True, "done": bool(db.get_setting(conn, "guide:demo")) or real},
@@ -845,6 +851,7 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
     income_slots = {r["merchant"]: i + 1 for i, r in enumerate(conn.execute(f"""
         SELECT merchant FROM ({TX_SELECT}) WHERE category = 'Income'
         GROUP BY merchant HAVING SUM(amount) > 0 ORDER BY SUM(amount) DESC LIMIT {INCOME_COLORS}"""))}
+    name = merchant_namer(conn)
     return {
         "period": period,
         "month": period,  # older name, kept for compatibility
@@ -853,8 +860,8 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
         "net": round(income - spending, 2),
         "categories": [dict(r) for r in by_cat],
         "credits": credits,  # categories where more came back than went out
-        "merchants": [dict(r) | {"name": display_name(r["merchant"])} for r in by_merchant],
-        "income_sources": [dict(r) | {"name": display_name(r["merchant"]), "color_slot": income_slots.get(r["merchant"])}
+        "merchants": [dict(r) | {"name": name(r["merchant"])} for r in by_merchant],
+        "income_sources": [dict(r) | {"name": name(r["merchant"]), "color_slot": income_slots.get(r["merchant"])}
                            for r in by_source],
     }
 
@@ -876,15 +883,17 @@ def transactions(month: str | None = None, category: str | None = None,
         where.append("category = ?"); params.append(category)
     if merchant:
         where.append("merchant = ?"); params.append(merchant)
-    if q:
-        where.append("(description LIKE ? OR merchant LIKE ?)"); params += [f"%{q}%"] * 2
+    if q:  # your own merchant names count too
+        where.append("(description LIKE ? OR merchant LIKE ? OR merchant IN "
+                     "(SELECT merchant FROM merchant_names WHERE name LIKE ?))"); params += [f"%{q}%"] * 3
     sql = f"SELECT * FROM ({TX_SELECT})"
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY posted DESC LIMIT ?"
     rows = conn.execute(sql, (*params, limit)).fetchall()
+    name = merchant_namer(conn)
     return [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
-                       "name": display_name(r["merchant"]),
+                       "name": name(r["merchant"]),
                        "description_key": description_key(r["description"])} for r in rows]
 
 
@@ -962,10 +971,11 @@ def review_list(show: Literal["unchecked", "recent"] = "unchecked", limit: int =
         params = (since, limit)
     rows = conn.execute(sql, params).fetchall()
     remaining = conn.execute(f"SELECT COUNT(*) FROM ({TX_SELECT}) WHERE NOT reviewed").fetchone()[0]
+    name = merchant_namer(conn)
     return {
         "remaining": remaining,
         "items": [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
-                             "name": display_name(r["merchant"]), "reviewed": bool(r["reviewed"]),
+                             "name": name(r["merchant"]), "reviewed": bool(r["reviewed"]),
                              "description_key": description_key(r["description"])} for r in rows],
     }
 
@@ -1088,15 +1098,37 @@ def merchants(conn=Depends(get_conn)):
             "FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant GROUP BY 1, 2"):
         if r["merchant"] not in auto or r["n"] > auto[r["merchant"]][1]:
             auto[r["merchant"]] = (r["category"], r["n"])
+    name = merchant_namer(conn)
     combined: dict[str, list] = {}
     for r in conn.execute("SELECT alias, merchant FROM merchant_aliases ORDER BY alias"):
-        combined.setdefault(r["merchant"], []).append({"merchant": r["alias"], "name": display_name(r["alias"])})
+        combined.setdefault(r["merchant"], []).append({"merchant": r["alias"], "name": name(r["alias"])})
     return [dict(r) | {
-        "name": display_name(r["merchant"]),
+        "name": name(r["merchant"]),
+        "bank_name": display_name(r["merchant"]),  # what Penny would call it on its own
         "auto_category": auto[r["merchant"]][0],
         "last_date": date.fromtimestamp(r["last_posted"]).isoformat(),
         "combined": combined.get(r["merchant"], []),
     } for r in rows]
+
+
+class MerchantNameBody(BaseModel):
+    merchant: str
+    name: str  # blank goes back to the name from the bank's wording
+
+
+@app.put("/api/merchants/name")
+def rename_merchant(body: MerchantNameBody, conn=Depends(get_conn)):
+    """Give a merchant your own name, shown everywhere it appears. Syncs keep it."""
+    name = " ".join(body.name.split())
+    if len(name) > 60:
+        fail(Exception("Keep merchant names to 60 characters or fewer."))
+    with conn:
+        if not name or name == display_name(body.merchant):
+            conn.execute("DELETE FROM merchant_names WHERE merchant = ?", (body.merchant,))
+        else:
+            conn.execute("INSERT INTO merchant_names (merchant, name) VALUES (?, ?) "
+                         "ON CONFLICT(merchant) DO UPDATE SET name = excluded.name", (body.merchant, name))
+    return {"ok": True}
 
 
 class CombineBody(BaseModel):
@@ -1108,7 +1140,7 @@ class CombineBody(BaseModel):
 def combine_merchants(body: CombineBody, conn=Depends(get_conn)):
     """Count other merchants' transactions as `merchant` from now on.
 
-    Rules and pictures the others had move over when `merchant` has none of
+    Rules, pictures and names the others had move over when `merchant` has none of
     its own. Merchants already combined into one of the others come along.
     """
     keep = conn.execute("SELECT merchant FROM merchant_aliases WHERE alias = ?", (body.merchant,)).fetchone()
@@ -1127,7 +1159,9 @@ def combine_merchants(body: CombineBody, conn=Depends(get_conn)):
                          "SELECT ?, pattern, category FROM description_rules WHERE merchant = ?", (target, other))
             conn.execute("INSERT OR IGNORE INTO merchant_logos (merchant, mime, image, version) "
                          "SELECT ?, mime, image, version FROM merchant_logos WHERE merchant = ?", (target, other))
-            for table in ("merchant_rules", "description_rules", "merchant_logos"):
+            conn.execute("INSERT OR IGNORE INTO merchant_names (merchant, name) "
+                         "SELECT ?, name FROM merchant_names WHERE merchant = ?", (target, other))
+            for table in ("merchant_rules", "description_rules", "merchant_logos", "merchant_names"):
                 conn.execute(f"DELETE FROM {table} WHERE merchant = ?", (other,))
     return {"ok": True, "merchant": target}
 
@@ -1200,10 +1234,11 @@ def delete_merchant_logo(merchant: str, conn=Depends(get_conn)):
 def get_subscriptions(conn=Depends(get_conn)):
     txs = conn.execute(f"SELECT merchant, posted, amount, category, description_rule FROM ({TX_SELECT})").fetchall()
     overrides = {r["merchant"]: r["status"] for r in conn.execute("SELECT * FROM subscription_overrides")}
+    name = merchant_namer(conn)
     kinds = {r["key"]: r["kind"] for r in conn.execute("SELECT * FROM recurring_kinds")}
     found = subscriptions.detect(
         [dict(t) for t in txs], date.today(),
-        names={t["merchant"]: display_name(t["merchant"]) for t in txs},
+        names={m: name(m) for m in {t["merchant"] for t in txs}},
         overrides=overrides, kinds=kinds, bill_categories=bill_categories(conn))
     active = [s for s in found if s.active and not s.ignored]
     total = lambda items, field: round(sum(getattr(s, field) for s in items), 2)
@@ -1286,6 +1321,7 @@ def import_preview(body: ImportPreviewBody, conn=Depends(get_conn)):
 
     rules = dict(conn.execute("SELECT merchant, category FROM merchant_rules").fetchall())
     aliases = dict(conn.execute("SELECT alias, merchant FROM merchant_aliases").fetchall())
+    name = merchant_namer(conn)
     description_rules = conn.execute(
         "SELECT merchant, pattern, category FROM description_rules ORDER BY length(pattern) DESC").fetchall()
     preview = []
@@ -1298,7 +1334,7 @@ def import_preview(body: ImportPreviewBody, conn=Depends(get_conn)):
         posted = int(datetime(t["date"].year, t["date"].month, t["date"].day, 12).timestamp())  # as importer saves it
         day = date.fromtimestamp(purchase_date(posted, t["description"]))
         preview.append({"date": day.isoformat(), "description": t["description"],
-                        "amount": t["amount"], "category": category, "name": display_name(merchant)})
+                        "amount": t["amount"], "category": category, "name": name(merchant)})
     dates = [t["date"] for t in txs]
     return result | {
         "problem": None,

@@ -60,3 +60,31 @@ def test_logo_upload_serve_and_delete(client):
 def test_logo_rejects_svg(client):
     svg = "data:image/svg+xml;base64," + base64.b64encode(b"<svg onload='alert(1)'/>").decode()
     assert client.put("/api/merchant-logo", json={"merchant": "disney plus", "image": svg}).status_code == 400
+
+
+def test_rename_shows_everywhere_and_reverts(client):
+    client.put("/api/merchants/name", json={"merchant": "starbucks", "name": "  Corner   Coffee "})
+    m = merchant(client, "starbucks")
+    assert (m["name"], m["bank_name"]) == ("Corner Coffee", "Starbucks")
+    txs = client.get("/api/transactions", params={"merchant": "starbucks"}).json()
+    assert txs and {t["name"] for t in txs} == {"Corner Coffee"}
+    found = client.get("/api/transactions", params={"q": "corner coff"}).json()  # search knows your name
+    assert found and {t["merchant"] for t in found} == {"starbucks"}
+    month = txs[0]["month"]
+    top = client.get("/api/spending/breakdown", params={"period": month}).json()["merchants"]
+    assert "Corner Coffee" in {t["name"] for t in top}
+
+    client.put("/api/merchants/name", json={"merchant": "disney plus", "name": "Movie night"})
+    subs = {s["merchant"]: s["name"] for s in client.get("/api/subscriptions").json()["items"]}
+    assert subs["disney plus"] == "Movie night"
+
+    client.put("/api/merchants/name", json={"merchant": "starbucks", "name": ""})
+    assert merchant(client, "starbucks")["name"] == "Starbucks"
+    r = client.put("/api/merchants/name", json={"merchant": "starbucks", "name": "x" * 61})
+    assert r.status_code == 400
+
+
+def test_combining_keeps_a_name(client):
+    client.put("/api/merchants/name", json={"merchant": "larkspur coffee", "name": "Larkspur"})
+    client.post("/api/merchants/combine", json={"merchant": "starbucks", "others": ["larkspur coffee"]})
+    assert merchant(client, "starbucks")["name"] == "Larkspur"  # starbucks had no name of its own

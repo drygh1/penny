@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS merchant_aliases (
     merchant TEXT NOT NULL
 );
 
+-- Your own names for merchants. Without one, the name comes from the bank's wording.
+CREATE TABLE IF NOT EXISTS merchant_names (
+    merchant TEXT PRIMARY KEY,
+    name     TEXT NOT NULL
+);
+
 -- One transaction put in a category by hand. Wins over every rule.
 CREATE TABLE IF NOT EXISTS transaction_categories (
     tx_id    TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,

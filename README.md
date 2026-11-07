@@ -142,6 +142,7 @@ SimpleFIN only reaches back about 90 days. For older transactions:
 
 The **Merchants** page lists everyone you've paid. For each merchant you can:
 
+- **Rename it.** Click **Rename** to give a merchant your own name, like "Grandma" instead of "Zelle Payment From M Smith". The new name shows everywhere the merchant appears, and syncs keep it. The merchant then shows what it was called before; save a blank name to go back to it.
 - **Pick a category.** This creates a rule that applies to all past and future transactions from that merchant. Choose "Automatic" to remove the rule.
 - **Combine merchants.** Click **Combine…** and tick the other names that are really the same merchant. Their transactions count as this one everywhere, including new ones. The merchant then lists what it includes, each with a **Separate** link to undo.
 - **Add a picture.** Click the circle or "Add picture" and choose a PNG or JPEG. The picture is cropped to a square, shrunk, and stored in the database. It shows up everywhere that merchant appears.

@@ -800,7 +800,8 @@ function renderMerchants() {
       <button class="avatar-btn" data-logo-pick="${key}" title="${hasLogo ? "Change" : "Add"} picture for ${esc(m.name)}">${avatar(m.merchant, m.name)}</button>
       <div class="main">
         <div class="title">${esc(m.name)}${m.rule_category ? '<span class="rule-tag">Rule</span>' : ""}${descTag}</div>
-        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}${descToggle} · <button class="link-btn" data-combine="${key}">Combine…</button></div>
+        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}${descToggle} · <button class="link-btn" data-rename-merchant="${key}">Rename</button> · <button class="link-btn" data-combine="${key}">Combine…</button></div>${m.name !== m.bank_name ? `
+        <div class="meta">Renamed from “${esc(m.bank_name)}”</div>` : ""}
         <div class="meta example">${esc(m.example)}</div>${m.combined.length ? `
         <div class="meta combined">Includes ${m.combined.map((c) =>
           `${esc(c.name)} <button class="link-btn" data-split="${esc(c.merchant)}" title="Make ${esc(c.name)} its own merchant again">Separate</button>`).join(", ")}</div>` : ""}
@@ -815,6 +816,35 @@ function renderMerchants() {
     </div>${open ? `<div class="m-descriptions" data-desc-panel="${key}">${descriptionPanel(m)}</div>` : ""}`;
   }).join("") : `<div class="empty">No merchants match.</div>`;
 }
+
+// Renaming swaps the name for a small form. Saving a blank name goes back to the
+// one Penny made from the bank's wording.
+$("#merchant-rows").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-rename-merchant]");
+  if (!btn) return;
+  const m = merchantRows.find((r) => r.merchant === btn.dataset.renameMerchant);
+  const main = btn.closest(".main");
+  main.innerHTML = `<form class="row rename-form">
+      <input name="name" value="${esc(m.name)}" placeholder="${esc(m.bank_name)}" maxlength="60" aria-label="Name for ${esc(m.name)}">
+      <button class="btn small">Save</button>
+      <button type="button" class="link-btn" data-rename-cancel>Cancel</button>
+      <p class="msg"></p>
+    </form>`;
+  const form = main.querySelector("form");
+  form.name.focus();
+  form.name.select();
+  form.querySelector("[data-rename-cancel]").onclick = renderMerchants;
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/merchants/name", { method: "PUT", body: { merchant: m.merchant, name: form.name.value } });
+      loadMerchants();
+    } catch (err) {
+      const msg = form.querySelector(".msg");
+      msg.className = "msg error"; msg.textContent = err.message;
+    }
+  };
+});
 
 // ---------- a merchant's descriptions & description rules ----------
 
