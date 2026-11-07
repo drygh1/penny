@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS manual_recurring (
     kind       TEXT NOT NULL    -- subscription or bill
 );
 
+-- Your own names for subscriptions and bills Penny found, keyed like
+-- recurring_kinds: a merchant, or "merchant|price" for one of several at a merchant.
+CREATE TABLE IF NOT EXISTS recurring_names (
+    key  TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
 -- Your own names for merchants. Without one, the name comes from the bank's wording.
 CREATE TABLE IF NOT EXISTS merchant_names (
     merchant TEXT PRIMARY KEY,

@@ -262,8 +262,29 @@ main { max-width: 1160px; margin: 0 auto; padding: 28px 32px 48px; display: grid
 .rule-pattern { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .tx-merchant { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* "Rename" right after a merchant's name, always showing so it can be found. */
-.tx-rename { font-size: 12px; padding: 0 4px; margin-left: 6px; }
+.tx td.tx-more { width: 44px; padding: 4px 0 4px 4px; text-align: right; }
+/* The ⋯ options button and the menu it opens */
+.icon-btn {
+  width: 36px; height: 36px; display: inline-grid; place-items: center; border: 0; border-radius: 50%;
+  background: transparent; color: var(--text-2); cursor: pointer; fill: currentColor;
+}
+.icon-btn:hover, .icon-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--text); }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.more { display: inline-flex; flex: none; }
+.menu {
+  position: fixed; z-index: 30; min-width: 210px; max-width: calc(100vw - 16px); padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+}
+.menu button {
+  display: block; width: 100%; text-align: left; font: inherit; font-size: 14px; font-weight: 500;
+  padding: 9px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--text);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.menu button:hover, .menu button:focus-visible { background: var(--surface-2); outline: 0; }
+.menu button.danger-link { color: var(--critical); }
+.m-controls { display: flex; align-items: center; gap: 4px; }
+.sub-controls { display: flex; align-items: center; gap: 4px; }
 .tx-name .rename-form input { flex: 1; min-width: 140px; }
 .badge {
   display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px;
@@ -355,7 +376,7 @@ dialog select { width: 100%; }
 .filters { display: flex; gap: 10px; flex-wrap: wrap; }
 .filters input { flex: 1; min-width: 160px; }
 .hint { margin: 10px 0; }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; position: relative; }  /* holds the hidden column labels inside the scroll box */
 table.tx { width: 100%; border-collapse: collapse; }
 .tx th { text-align: left; font-size: 13px; font-weight: 500; color: var(--muted); padding: 8px; border-bottom: 1px solid var(--axis); }
 .tx td { padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }

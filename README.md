@@ -90,7 +90,7 @@ person's banks. Expect to fix some at first. Every fix sticks for future transac
 - **Transactions page:** change one purchase's category. Click **Make a rule** under it to apply that to the whole merchant, or to descriptions like it.
 - **Merchants page:** set a merchant's default category, or **Combine** names that are really the same merchant (your bank might call your employer "Acme Corp" one month and "Acme Payroll" the next).
 - **Subscriptions page:** hide anything that isn't really recurring, and move items between Subscriptions and Bills.
-- **Net worth page:** **Rename** accounts to something shorter than the bank's name.
+- **Net worth page:** give accounts something shorter than the bank's name with **Rename** in each one's **⋯** menu.
 
 ## Connect your bank
 
@@ -138,27 +138,31 @@ SimpleFIN only reaches back about 90 days. For older transactions:
 - **Automatic backups.** Penny copies its database once a day (when it starts, syncs or imports) and before anything destructive: deleting data, removing an import, deleting a category, or restoring. It keeps 14 daily and 12 monthly copies, plus the last 20 safety copies, in `~/Library/Application Support/Penny/backups`. That folder is outside the project, readable only by you, never synced to a cloud service, and included in Time Machine if you use it.
 - **Restore** any backup from **Settings → Your data → Restore a backup**. The current state is backed up first, so a restore can be undone.
 
+## Naming subscriptions
+
+A subscription Penny finds is named after its merchant. Choose **Rename** in its **⋯** menu to give it your own name, like "iCloud+" for a $2.99 Apple charge. It renames just that subscription, so a merchant that bills for several things (Apple, Google, Amazon) can have a name for each; the merchant's name still shows under it. Save a blank name to go back. To rename one you added yourself, use **Edit** in its **⋯** menu.
+
 ## Subscriptions you add yourself
 
-Penny finds most subscriptions and bills on its own, but some it can't: several subscriptions billed together, or a company whose charges come in under names that keep changing (Apple is a common one). On the **Subscriptions** page, click **Add one** under Subscriptions or Bills and enter the name, the price of each charge, how often it charges and the next charge date. Penny counts it in the monthly and yearly totals and in **Coming up** on the dashboard, and moves the next date forward on its own. Each one you added has **Edit** and **Delete**. If Penny also found the same charge, click **Not recurring** on Penny's one so it isn't counted twice. Adding one doesn't change any transactions.
+Penny finds most subscriptions and bills on its own, but some it can't: several subscriptions billed together, or a company whose charges come in under names that keep changing (Apple is a common one). On the **Subscriptions** page, click **Add one** under Subscriptions or Bills and enter the name, the price of each charge, how often it charges and the next charge date. Penny counts it in the monthly and yearly totals and in **Coming up** on the dashboard, and moves the next date forward on its own. Each one you added has **Edit** and **Delete** in its **⋯** menu. If Penny also found the same charge, choose **Not recurring** in the **⋯** menu of Penny's one so it isn't counted twice. Adding one doesn't change any transactions.
 
 ## Merchant rules and pictures
 
-The **Merchants** page lists everyone you've paid. For each merchant you can:
+The **Merchants** page lists everyone you've paid. The category menu is in each merchant's row; everything else is in its **⋯** menu. For each merchant you can:
 
-- **Rename it.** Click **Rename** to give a merchant your own name, like "Grandma" instead of "Zelle Payment From M Smith". You can also rename from the **Transactions** page: click **Rename** next to a merchant's name. The new name shows everywhere the merchant appears, and syncs keep it. The merchant then shows what it was called before; save a blank name to go back to it.
+- **Rename it.** Choose **Rename** to give a merchant your own name, like "Grandma" instead of "Zelle Payment From M Smith". You can also rename from the **Transactions** page: click **⋯** at the end of a row, then **Rename**. The new name shows everywhere the merchant appears, and syncs keep it. The merchant then shows what it was called before; save a blank name to go back to it.
 - **Pick a category.** This creates a rule that applies to all past and future transactions from that merchant. Choose "Automatic" to remove the rule.
-- **Combine merchants.** Click **Combine…** and tick the other names that are really the same merchant. Their transactions count as this one everywhere, including new ones. The merchant then lists what it includes, each with a **Separate** link to undo.
-- **Add a picture.** Click the circle or "Add picture" and choose a PNG or JPEG. The picture is cropped to a square, shrunk, and stored in the database. It shows up everywhere that merchant appears.
-- **Treat some descriptions differently.** Click **Descriptions** to see each different description the merchant uses, in full. For example, a payment app might use "...TYPE: CASHOUT..." and "...TYPE: PAYMENT...". Give any of them its own category, or add a rule like "description contains *cashout*". Numbers are ignored when matching, so trace and store numbers don't matter. A description rule beats the merchant's category, and the more specific rule wins.
+- **Combine merchants.** Choose **Combine with…** and tick the other names that are really the same merchant. Their transactions count as this one everywhere, including new ones. The merchant then lists what it includes, and its **⋯** menu has **Separate** for each one, to undo.
+- **Add a picture.** Click the circle, or choose **Add picture**, and pick a PNG or JPEG. The picture is cropped to a square, shrunk, and stored in the database. It shows up everywhere that merchant appears.
+- **Treat some descriptions differently.** Choose **Show its descriptions** to see each different description the merchant uses, in full. For example, a payment app might use "...TYPE: CASHOUT..." and "...TYPE: PAYMENT...". Give any of them its own category, or add a rule like "description contains *cashout*". Numbers are ignored when matching, so trace and store numbers don't matter. A description rule beats the merchant's category, and the more specific rule wins.
 
-Changing a category on the **Transactions** or **Review** page changes just that purchase, for a merchant that's usually one thing but sometimes another. An edited purchase keeps its category through syncs and rule changes. Under it, **Reset** (on Transactions) sends it back to the merchant's default, and **Make a rule** applies its category to everything from the merchant or only to descriptions containing the words you choose. If a description rule set the purchase's category, that rule is the one offered first. The row stays on screen after you change it, even if it no longer matches your filters, until you leave the page or change the filters.
+Changing a category on the **Transactions** or **Review** page changes just that purchase, for a merchant that's usually one thing but sometimes another. An edited purchase keeps its category through syncs and rule changes. On Transactions, its **⋯** menu then has **Make a rule**, which applies its category to everything from the merchant or only to descriptions containing the words you choose, and **Reset**, which sends it back to the merchant's default. On Review, it's in the row's **⋯** menu too. If a description rule set the purchase's category, that rule is the one offered first. The row stays on screen after you change it, even if it no longer matches your filters, until you leave the page or change the filters.
 
 ## Subscriptions and bills
 
 A merchant counts as recurring when it charges on a regular schedule (weekly to yearly) for a steady amount, after 2 to 3 charges. When one merchant bills for several things (an app store billing for several apps), its charges are grouped by price and each group is checked on its own.
 
-Recurring charges in Housing or Utilities & Bills are listed as **Bills**; everything else is a **Subscription**. Move any of them with **Move to bills** / **Move to subscriptions**, change the category from the dropdown, or mark it **Not recurring** to hide it.
+Recurring charges in Housing or Utilities & Bills are listed as **Bills**; everything else is a **Subscription**. Change the category from the dropdown. Each one's **⋯** menu can rename it, move it between Bills and Subscriptions, or mark it **Not recurring** to hide it.
 
 ## Dates
 

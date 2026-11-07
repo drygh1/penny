@@ -503,6 +503,7 @@ $("#category-bars").addEventListener("click", (e) => {
 // "Make a rule" to change more than that one.
 
 let reviewShow = "unchecked";
+let reviewById = {};  // the rows on screen, by id
 let reviewRemaining = 0;
 // On Review and Transactions, a row you just changed stays until you leave the
 // page (or change the filters), so its "Make a rule" link is still there to click.
@@ -515,12 +516,16 @@ async function withKept(rows, order) {
 }
 
 // Offered under every purchase whose category you changed.
-const ruleButton = (t) => `<button class="link-btn" data-make-rule="${esc(t.id)}" data-name="${esc(t.name)}" data-category="${esc(t.category)}" data-key="${esc(t.description_key)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}>Make a rule</button>`;
+const ruleAttrs = (t) => `data-make-rule="${esc(t.id)}" data-name="${esc(t.name)}" data-category="${esc(t.category)}" data-key="${esc(t.description_key)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}`;
 
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-make-rule]");
   if (!btn) return;
   const { makeRule: id, name, category, key, pattern } = btn.dataset;
+  openRuleDialog({ id, name, category, key, pattern });
+});
+
+function openRuleDialog({ id, name, category, key, pattern }) {
   const form = $("#rule-form");
   form.dataset.id = id;
   $("#rule-text").textContent = `Put these in ${category}, past and future. Purchases you changed one by one stay as they are.`;
@@ -530,6 +535,94 @@ document.addEventListener("click", (e) => {
   $("#rule-pattern").value = pattern || key;
   $("#rule-msg").textContent = "";
   $("#rule-dialog").showModal();
+}
+
+// ---------- a row's options menu (the ⋯ button) ----------
+// Keeps rows tidy: the everyday control stays in the row, the rest waits here.
+// moreMenu() puts a ⋯ button and its items (in a <template>) in the row. The menu
+// opens inside the row, so each item's click reaches the same handler a button
+// in the row would; items are ordinary buttons with the usual data-* attributes.
+
+const menuItem = (label, attrs, danger = false) =>
+  `<button type="button" role="menuitem"${danger ? ' class="danger-link"' : ""} ${attrs}>${esc(label)}</button>`;
+
+const moreMenu = (label, items) =>
+  `<span class="more"><button type="button" class="icon-btn" data-more aria-haspopup="menu" aria-expanded="false" aria-label="${esc(label)}">` +
+  `<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="4" cy="10" r="1.7"/><circle cx="10" cy="10" r="1.7"/><circle cx="16" cy="10" r="1.7"/></svg>` +
+  `</button><template>${items.filter(Boolean).join("")}</template></span>`;
+
+let openMenu = null;
+
+function closeMenu({ focus = false } = {}) {
+  if (!openMenu) return;
+  const { menu, button } = openMenu;
+  openMenu = null;
+  menu.remove();
+  button.setAttribute("aria-expanded", "false");
+  if (focus) button.focus();
+}
+
+function showMenu(button) {
+  const menu = document.createElement("div");
+  menu.className = "menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = button.nextElementSibling.innerHTML;
+  button.parentElement.append(menu);
+  button.setAttribute("aria-expanded", "true");
+  openMenu = { menu, button };
+  placeMenu();
+  const entries = [...menu.querySelectorAll("[role=menuitem]")];
+  entries[0]?.focus();
+  menu.addEventListener("keydown", (e) => {
+    const i = entries.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      entries[(i + (e.key === "ArrowDown" ? 1 : entries.length - 1)) % entries.length].focus();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeMenu({ focus: true });
+    } else if (e.key === "Tab") {
+      closeMenu();
+    }
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const more = e.target.closest("[data-more]");
+  if (more) {
+    const wasOpen = openMenu?.button === more;
+    closeMenu();
+    if (!wasOpen) showMenu(more);  // a second click on ⋯ just closes it
+    return;
+  }
+  // A pick has already reached its row's handler; close afterward so that handler
+  // still finds the row around the item. A click anywhere else closes it too.
+  if (openMenu && (e.target.closest(".menu [role=menuitem]") || !openMenu.menu.contains(e.target))) {
+    setTimeout(() => closeMenu());
+  }
+});
+// Fixed to the window, so a scrolling table or a narrow card can't cut it off. It
+// follows its button as the page scrolls, and closes once the button is out of sight.
+function placeMenu() {
+  if (!openMenu) return;
+  const { menu, button } = openMenu;
+  const r = button.getBoundingClientRect();
+  if (r.bottom < 0 || r.top > innerHeight) return closeMenu();
+  const below = r.bottom + menu.offsetHeight + 8 <= innerHeight;
+  menu.style.top = `${below ? r.bottom + 4 : Math.max(8, r.top - menu.offsetHeight - 4)}px`;
+  menu.style.left = `${Math.min(Math.max(8, r.right - menu.offsetWidth), innerWidth - menu.offsetWidth - 8)}px`;
+}
+window.addEventListener("hashchange", () => closeMenu());
+window.addEventListener("resize", () => placeMenu());
+window.addEventListener("scroll", () => placeMenu(), true);
+
+// "Show all from X": the Transactions page, searched for that merchant.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-show-merchant]");
+  if (!btn) return;
+  txFilters = { month: "", category: "", q: btn.dataset.showMerchant };
+  if (location.hash === "#transactions") { keepVisible.clear(); loadTransactions(); }
+  else location.hash = "#transactions";
 });
 
 $("#rule-pattern").onfocus = () => { $("#rule-form").scope.value = "description"; };
@@ -559,6 +652,7 @@ async function loadReview() {
   const r = await api(`/api/review?show=${reviewShow}`);
   if (reviewShow === "unchecked") r.items = await withKept(r.items, (a, b) => a.posted - b.posted);
   showReviewCount(r.remaining);
+  reviewById = Object.fromEntries(r.items.map((t) => [t.id, t]));
   document.querySelectorAll("[data-review-show]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.reviewShow === reviewShow));
   $("#review-title").textContent = reviewShow === "unchecked" ? "To review" : "Last 60 days";
   $("#review-sub").textContent = r.remaining
@@ -573,8 +667,7 @@ async function loadReview() {
 function reviewRow(t) {
   const options = categoryNames().map((c) => `<option${c === t.category ? " selected" : ""}>${esc(c)}</option>`).join("");
   const id = esc(t.id);
-  const after = t.edited
-    ? `<div class="meta review-after">Changed for this purchase · ${ruleButton(t)}</div>` : "";
+  const after = t.edited ? `<div class="meta review-after">Changed for this purchase</div>` : "";
   const check = t.reviewed
     ? `<button class="link-btn review-done" data-review-undo="${id}" title="Mark as not checked">Checked · Undo</button>`
     : `<button class="btn small secondary review-ok" data-review-ok="${id}" title="The category is right">✓</button>`;
@@ -591,6 +684,11 @@ function reviewRow(t) {
         ${after}
       </div>
       ${check}
+      ${moreMenu(`Options for ${t.name}`, [
+        t.edited && menuItem("Make a rule…", ruleAttrs(t)),
+        menuItem(`Rename ${t.name}`, `data-review-rename="${id}"`),
+        menuItem(`Show all from ${t.name}`, `data-show-merchant="${esc(t.name)}"`),
+      ])}
     </div>`;
 }
 
@@ -605,6 +703,14 @@ $("#review-list").addEventListener("change", async (e) => {
   keepVisible.add(sel.dataset.reviewCat);
   await api("/api/transaction-category", { method: "PUT", body: { id: sel.dataset.reviewCat, category: sel.value } });
   loadReview();
+});
+
+$("#review-list").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-review-rename]");
+  if (!btn) return;
+  const t = reviewById[btn.dataset.reviewRename];
+  renameMerchantForm(btn.closest(".item").querySelector(".main"),
+    { merchant: t.merchant, name: t.name, bankName: t.bank_name }, () => loadReview());
 });
 
 $("#review-list").addEventListener("click", async (e) => {
@@ -647,6 +753,7 @@ async function loadSubscriptions() {
   $("#s-yearly").textContent = fmt0.format(subs.yearly_total);
 
   manualItems = Object.fromEntries(subs.items.filter((s) => s.manual_id).map((s) => [s.manual_id, s]));
+  subItems = Object.fromEntries(subs.items.map((s) => [s.key, s]));
   const row = (s, action, label) => {
     if (s.manual_id) return manualRow(s);
     const badge = s.previous_amount != null
@@ -657,14 +764,18 @@ async function loadSubscriptions() {
     const options = categoryNames().map((c) => `<option${c === s.category ? " selected" : ""}>${esc(c)}</option>`).join("");
     const select = `<select data-sub-merchant="${esc(s.merchant)}"${s.description_rule ? ` data-pattern="${esc(s.description_rule)}" title="Set by a rule for descriptions containing “${esc(s.description_rule)}”"` : ""} aria-label="Category for ${esc(s.name)}">${options}</select>`;
     const other = s.kind === "bill" ? "subscription" : "bill";
-    const move = s.active && !s.ignored
-      ? `<button class="link-btn" data-sub-kind="${other}" data-key="${esc(s.key)}">Move to ${other}s</button>` : "";
-    const btn = `<button class="link-btn" data-sub-action="${action}" data-key="${esc(s.key)}">${label}</button>`;
+    const menu = moreMenu(`Options for ${s.name}`, [
+      menuItem("Rename", `data-sub-rename="${esc(s.key)}"`),
+      s.active && !s.ignored && menuItem(`Move to ${other}s`, `data-sub-kind="${other}" data-key="${esc(s.key)}"`),
+      menuItem(label, `data-sub-action="${action}" data-key="${esc(s.key)}"`),
+      menuItem("Show its charges", `data-show-merchant="${esc(s.merchant_name)}"`),
+    ]);
+    // Renamed: say which merchant it's from, since that's how it shows in transactions.
     return itemHTML({
-      title: s.name, meta, amount: money(s.amount),
+      title: s.name, meta: s.name !== s.merchant_name ? `${s.merchant_name} · ${meta}` : meta, amount: money(s.amount),
       amountMeta: s.cadence === "monthly" ? "" : `${money(s.monthly_cost)}/mo`,
       extra: badge, category: s.category, merchant: s.merchant,
-      actions: `<div class="sub-controls">${select}<div class="sub-buttons">${move}${btn}</div></div>`,
+      actions: `<div class="sub-controls">${select}${menu}</div>`,
     });
   };
   const fill = (el, list, action, label, empty) =>
@@ -680,14 +791,28 @@ async function loadSubscriptions() {
 // For ones Penny can't find on its own, like several subscriptions billed through Apple.
 
 let manualItems = {};  // manual_id -> item, from the last load
+let subItems = {};     // key -> every item, from the last load
+
+// Renaming one Penny found names just that subscription, not its merchant.
+$("#view-subscriptions").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-sub-rename]");
+  if (!btn) return;
+  const s = subItems[btn.dataset.subRename];
+  renameForm(btn.closest(".item").querySelector(".main"), {
+    name: s.name, placeholder: s.merchant_name,
+    save: (name) => api("/api/subscriptions/name", { method: "PUT", body: { key: s.key, name } }),
+  }, () => loadSubscriptions());
+});
 
 function manualRow(s) {
   return itemHTML({
     title: s.name, meta: `${s.cadence} · next ${dayLabel(s.next_date)}`, amount: money(s.amount),
     amountMeta: s.cadence === "monthly" ? "" : `${money(s.monthly_cost)}/mo`,
     extra: `<span class="rule-tag">Added by you</span>`, category: s.category,
-    actions: `<div class="sub-buttons"><button class="link-btn" data-manual-edit="${s.manual_id}">Edit</button>
-      <button class="link-btn danger-link" data-manual-delete="${s.manual_id}">Delete</button></div>`,
+    actions: moreMenu(`Options for ${s.name}`, [
+      menuItem("Edit", `data-manual-edit="${s.manual_id}"`),
+      menuItem("Delete", `data-manual-delete="${s.manual_id}"`, true),
+    ]),
   });
 }
 
@@ -800,19 +925,23 @@ async function loadTransactions() {
   const params = new URLSearchParams(Object.entries(txFilters).filter(([, v]) => v));
   const rows = await withKept(await api(`/api/transactions?${params}`), (a, b) => b.posted - a.posted);
   const catOptions = (current) => categoryNames().map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("");
+  txById = Object.fromEntries(rows.map((t) => [t.id, t]));
   $("#tx-body").innerHTML = rows.length
     ? rows.map((t) => `<tr>
         <td>${dayLabel(t.date)}</td>
-        <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<button class="link-btn tx-rename" data-tx-rename="${esc(t.merchant)}" data-name="${esc(t.name)}" data-bank-name="${esc(t.bank_name)}" aria-label="Rename ${esc(t.name)}">Rename</button><div class="meta">${esc(t.description)}</div></div></div></td>
+        <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<div class="meta">${esc(t.description)}</div></div></div></td>
         <td class="cat">${dot(t.category)}<select data-tx-id="${esc(t.id)}" aria-label="Category">${catOptions(t.category)}</select>${t.edited
-          ? `<div class="meta tx-edited">Just this one ·
-              <button class="link-btn" data-tx-reset="${esc(t.id)}" title="Back to ${esc(t.default_category)}">Reset</button> ·
-              ${ruleButton(t)}</div>`
-          : ""}</td>
+          ? `<div class="meta tx-edited" title="Changed for just this purchase. ⋯ has Make a rule and Reset.">Just this one</div>` : ""}</td>
         <td class="muted">${esc(t.account_name)}</td>
         <td class="num ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</td>
+        <td class="tx-more">${moreMenu(`Options for ${t.name}, ${dayLabel(t.date)}`, [
+          menuItem(`Rename ${t.name}`, `data-tx-rename="${esc(t.id)}"`),
+          t.edited && menuItem("Make a rule…", ruleAttrs(t)),
+          t.edited && menuItem(`Reset to ${t.default_category}`, `data-tx-reset="${esc(t.id)}"`),
+          menuItem(`Show all from ${t.name}`, `data-show-merchant="${esc(t.name)}"`),
+        ])}</td>
       </tr>`).join("")
-    : `<tr><td colspan="5" class="empty">No transactions match.</td></tr>`;
+    : `<tr><td colspan="6" class="empty">No transactions match.</td></tr>`;
 }
 
 const setTxFilter = (name, value) => { txFilters[name] = value; keepVisible.clear(); loadTransactions(); };
@@ -831,18 +960,20 @@ $("#tx-body").addEventListener("change", async (e) => {
   loadTransactions();
   refreshStatus();  // choosing a category checks it, so the Review count drops
 });
+let txById = {};  // the rows on screen, by id
+
 $("#tx-body").addEventListener("click", async (e) => {
   const rename = e.target.closest("[data-tx-rename]");
+  const reset = e.target.closest("[data-tx-reset]");
   if (rename) {
     // Renames the merchant, so every purchase from it changes, not just this row.
-    const { txRename: merchant, name, bankName } = rename.dataset;
-    renameMerchantForm(rename.closest(".tx-name"), { merchant, name, bankName }, () => loadTransactions());
-    return;
+    const t = txById[rename.dataset.txRename];
+    renameMerchantForm(rename.closest("tr").querySelector(".tx-name"),
+      { merchant: t.merchant, name: t.name, bankName: t.bank_name }, () => loadTransactions());
+  } else if (reset) {
+    await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
+    loadTransactions();
   }
-  const reset = e.target.closest("[data-tx-reset]");
-  if (!reset) return;
-  await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
-  loadTransactions();
 });
 
 // ---------- merchants ----------
@@ -873,24 +1004,28 @@ function renderMerchants() {
     const open = openDescriptions.has(m.merchant);
     const descTag = m.description_rules
       ? `<span class="rule-tag">${m.description_rules} description ${m.description_rules === 1 ? "rule" : "rules"}</span>` : "";
-    const descToggle = m.variants > 1 || m.description_rules
-      ? ` · <button class="link-btn" data-desc-toggle="${key}" aria-expanded="${open}">${open ? "Hide" : "Descriptions"} (${m.variants})</button>` : "";
+    const menu = moreMenu(`Options for ${m.name}`, [
+      menuItem("Rename", `data-rename-merchant="${key}"`),
+      (m.variants > 1 || m.description_rules) &&
+        menuItem(`${open ? "Hide" : "Show"} its ${m.variants} descriptions`, `data-desc-toggle="${key}"`),
+      menuItem("Combine with…", `data-combine="${key}"`),
+      ...m.combined.map((c) => menuItem(`Separate ${c.name}`, `data-split="${esc(c.merchant)}"`)),
+      menuItem(hasLogo ? "Change picture" : "Add picture", `data-logo-pick="${key}"`),
+      hasLogo && menuItem("Remove picture", `data-logo-remove="${key}"`),
+      menuItem("Show its transactions", `data-show-merchant="${esc(m.name)}"`),
+    ]);
     return `<div class="item merchant-row">
       <button class="avatar-btn" data-logo-pick="${key}" title="${hasLogo ? "Change" : "Add"} picture for ${esc(m.name)}">${avatar(m.merchant, m.name)}</button>
       <div class="main">
         <div class="title">${esc(m.name)}${m.rule_category ? '<span class="rule-tag">Rule</span>' : ""}${descTag}</div>
-        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}${descToggle} · <button class="link-btn" data-rename-merchant="${key}">Rename</button> · <button class="link-btn" data-combine="${key}">Combine…</button></div>${m.name !== m.bank_name ? `
+        <div class="meta">${m.count} ${m.count === 1 ? "transaction" : "transactions"} · ${money(m.spent)} spent · last ${dayLabel(m.last_date)}</div>${m.name !== m.bank_name ? `
         <div class="meta">Renamed from “${esc(m.bank_name)}”</div>` : ""}
         <div class="meta example">${esc(m.example)}</div>${m.combined.length ? `
-        <div class="meta combined">Includes ${m.combined.map((c) =>
-          `${esc(c.name)} <button class="link-btn" data-split="${esc(c.merchant)}" title="Make ${esc(c.name)} its own merchant again">Separate</button>`).join(", ")}</div>` : ""}
+        <div class="meta combined">Includes ${m.combined.map((c) => esc(c.name)).join(", ")}</div>` : ""}
       </div>
       <div class="m-controls">
         <label class="m-category">${dot(effective)}<select data-rule-merchant="${key}" aria-label="Category for ${esc(m.name)}">${options}</select></label>
-        <div class="m-photo">
-          <button class="link-btn" data-logo-pick="${key}">${hasLogo ? "Change picture" : "Add picture"}</button>
-          ${hasLogo ? `<button class="link-btn" data-logo-remove="${key}">Remove</button>` : ""}
-        </div>
+        ${menu}
       </div>
     </div>${open ? `<div class="m-descriptions" data-desc-panel="${key}">${descriptionPanel(m)}</div>` : ""}`;
   }).join("") : `<div class="empty">No merchants match.</div>`;
@@ -900,8 +1035,14 @@ function renderMerchants() {
 // and Transactions pages. Saving a blank name goes back to the one Penny made
 // from the bank's wording. `done` redraws the page either way.
 function renameMerchantForm(box, { merchant, name, bankName }, done) {
+  renameForm(box, { name, placeholder: bankName,
+                    save: (value) => api("/api/merchants/name", { method: "PUT", body: { merchant, name: value } }) }, done);
+}
+
+// A small inline form for a new name. `save(value)` stores it; `done(saved)` redraws.
+function renameForm(box, { name, placeholder, save }, done) {
   box.innerHTML = `<form class="row rename-form">
-      <input name="name" value="${esc(name)}" placeholder="${esc(bankName)}" maxlength="60" aria-label="Name for ${esc(name)}">
+      <input name="name" value="${esc(name)}" placeholder="${esc(placeholder)}" maxlength="60" aria-label="Name for ${esc(name)}">
       <button class="btn small">Save</button>
       <button type="button" class="link-btn" data-rename-cancel>Cancel</button>
       <p class="msg"></p>
@@ -913,7 +1054,7 @@ function renameMerchantForm(box, { merchant, name, bankName }, done) {
   form.onsubmit = async (ev) => {
     ev.preventDefault();
     try {
-      await api("/api/merchants/name", { method: "PUT", body: { merchant, name: form.name.value } });
+      await save(form.name.value);
       done(true);
     } catch (err) {
       const msg = form.querySelector(".msg");
@@ -926,7 +1067,7 @@ $("#merchant-rows").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-rename-merchant]");
   if (!btn) return;
   const m = merchantRows.find((r) => r.merchant === btn.dataset.renameMerchant);
-  renameMerchantForm(btn.closest(".main"), { merchant: m.merchant, name: m.name, bankName: m.bank_name },
+  renameMerchantForm(btn.closest(".item").querySelector(".main"), { merchant: m.merchant, name: m.name, bankName: m.bank_name },
     (saved) => saved ? loadMerchants() : renderMerchants());
 });
 
@@ -1167,7 +1308,9 @@ async function loadAccounts() {
         meta: [acc.org_name, acc.nickname ? `Bank calls it “${acc.bank_name}”` : ""].filter(Boolean).join(" · "),
         amount: money(acc.balance),
         amountMeta: acc.available_balance != null && acc.available_balance !== acc.balance ? `${money(acc.available_balance)} available` : "",
-        actions: `<button class="link-btn" data-rename-account="${esc(acc.id)}" data-name="${esc(acc.name)}" data-bank-name="${esc(acc.bank_name)}">Rename</button>`,
+        actions: moreMenu(`Options for ${acc.name}`, [
+          menuItem("Rename", `data-rename-account="${esc(acc.id)}" data-name="${esc(acc.name)}" data-bank-name="${esc(acc.bank_name)}"`),
+        ]),
       })}</div>`;
   // Money you owe (credit cards, loans) goes under Debts; everything else, $0 included, is an asset.
   const assets = a.accounts.filter((acc) => acc.balance >= 0);
@@ -1426,10 +1569,10 @@ async function loadCategories() {
       <span class="muted">${c.transactions} ${c.transactions === 1 ? "transaction" : "transactions"}</span>
       ${c.locked
         ? `<span class="muted locked" title="Needed for spending totals">Built in</span>`
-        : `<span class="cat-actions">
-            ${c.fixed_name ? "" : `<button class="link-btn" data-rename-category="${esc(c.name)}">Rename</button>`}
-            <button class="link-btn danger-link" data-delete-category="${esc(c.name)}">Delete</button>
-          </span>`}
+        : `<span class="cat-actions">${moreMenu(`Options for ${c.name}`, [
+            !c.fixed_name && menuItem("Rename", `data-rename-category="${esc(c.name)}"`),
+            menuItem("Delete", `data-delete-category="${esc(c.name)}"`, true),
+          ])}</span>`}
     </div>`).join("");
 }
 

@@ -164,7 +164,7 @@
     </section>
 
     <section id="view-review" class="view" hidden>
-      <div class="tip" data-tip="review" hidden><span class="tip-label">Tip</span><p>New transactions wait here until you've checked them. Click <b>✓</b> if Penny got the category right, or pick a better one. A new category changes just that purchase; click <b>Make a rule</b> under it to change the whole merchant, or just descriptions like it.</p><button class="link-btn" data-tip-dismiss="review">Got it</button></div>
+      <div class="tip" data-tip="review" hidden><span class="tip-label">Tip</span><p>New transactions wait here until you've checked them. Click <b>✓</b> if Penny got the category right, or pick a better one. A new category changes just that purchase; then click its <b>⋯</b> and <b>Make a rule</b> to change the whole merchant, or just descriptions like it.</p><button class="link-btn" data-tip-dismiss="review">Got it</button></div>
       <div class="card">
         <div class="card-head">
           <div>
@@ -184,7 +184,7 @@
     </section>
 
     <section id="view-subscriptions" class="view" hidden>
-      <div class="tip" data-tip="subscriptions" hidden><span class="tip-label">Tip</span><p>Penny finds charges that repeat on a schedule. A new one shows up after 2 or 3 charges. Use <b>Move to bills</b> for things you can't cancel, and <b>Not recurring</b> to hide anything that isn't. Missing one, like a subscription billed through Apple? Click <b>Add one</b>.</p><button class="link-btn" data-tip-dismiss="subscriptions">Got it</button></div>
+      <div class="tip" data-tip="subscriptions" hidden><span class="tip-label">Tip</span><p>Penny finds charges that repeat on a schedule. A new one shows up after 2 or 3 charges. Each one's <b>⋯</b> menu can rename it, move it to bills if you can't cancel it, or mark it <b>Not recurring</b> to hide it. Missing one, like a subscription billed through Apple? Click <b>Add one</b>.</p><button class="link-btn" data-tip-dismiss="subscriptions">Got it</button></div>
       <div class="tiles">
         <div class="tile"><div class="label">Subscriptions</div><div class="value" id="s-monthly"></div><div class="sub" id="s-count"></div></div>
         <div class="tile"><div class="label">Bills</div><div class="value" id="b-monthly"></div><div class="sub" id="b-count"></div></div>
@@ -209,17 +209,17 @@
     </section>
 
     <section id="view-transactions" class="view" hidden>
-      <div class="tip" data-tip="transactions" hidden><span class="tip-label">Tip</span><p>The category dropdown changes just that purchase. To change more of them, click <b>Make a rule</b> under it afterward. To rename a merchant, click <b>Rename</b> next to its name.</p><button class="link-btn" data-tip-dismiss="transactions">Got it</button></div>
+      <div class="tip" data-tip="transactions" hidden><span class="tip-label">Tip</span><p>The category dropdown changes just that purchase. The <b>⋯</b> at the end of a row has the rest: rename the merchant, make a rule from the change, or see everything from that merchant.</p><button class="link-btn" data-tip-dismiss="transactions">Got it</button></div>
       <div class="card">
         <div class="filters">
           <input id="tx-search" type="search" placeholder="Search">
           <select id="tx-month" aria-label="Month"><option value="">All months</option></select>
           <select id="tx-category" aria-label="Category"><option value="">All categories</option></select>
         </div>
-        <p class="muted hint">Changing a category changes just that purchase. Click <b>Make a rule</b> under it to apply it to the whole merchant or to descriptions like it. All of a merchant's rules are on <a href="#merchants">Merchants</a>, under <b>Descriptions</b>.</p>
+        <p class="muted hint">Changing a category changes just that purchase. Then click <b>⋯</b> and <b>Make a rule</b> to apply it to the whole merchant or to descriptions like it. All of a merchant's rules are on <a href="#merchants">Merchants</a>: open its <b>⋯</b> menu and show its descriptions.</p>
         <div class="table-wrap">
           <table class="tx">
-            <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
+            <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th class="num">Amount</th><th><span class="sr-only">Options</span></th></tr></thead>
             <tbody id="tx-body"></tbody>
           </table>
         </div>
@@ -227,7 +227,7 @@
     </section>
 
     <section id="view-merchants" class="view" hidden>
-      <div class="tip" data-tip="merchants" hidden><span class="tip-label">Tip</span><p>Set each merchant's usual category here, or click <b>Rename</b> to call it what you like. If one shows up under two names, like your employer as "Acme Corp" and "Acme Payroll", click <b>Combine…</b> to make them one.</p><button class="link-btn" data-tip-dismiss="merchants">Got it</button></div>
+      <div class="tip" data-tip="merchants" hidden><span class="tip-label">Tip</span><p>Set each merchant's usual category here. Its <b>⋯</b> menu has the rest: rename it, add a picture, or, if it shows up under two names like your employer as "Acme Corp" and "Acme Payroll", combine them into one.</p><button class="link-btn" data-tip-dismiss="merchants">Got it</button></div>
       <div class="card">
         <div class="card-head">
           <h2>Merchants</h2>
@@ -247,7 +247,7 @@
     </section>
 
     <section id="view-accounts" class="view" hidden>
-      <div class="tip" data-tip="accounts" hidden><span class="tip-label">Tip</span><p>Assets are what you have and debts are what you owe. Click <b>Rename</b> to give an account a shorter name. Older points on the chart are worked out from your transactions, so they're close estimates.</p><button class="link-btn" data-tip-dismiss="accounts">Got it</button></div>
+      <div class="tip" data-tip="accounts" hidden><span class="tip-label">Tip</span><p>Assets are what you have and debts are what you owe. Click an account's <b>⋯</b> and <b>Rename</b> to give it a shorter name. Older points on the chart are worked out from your transactions, so they're close estimates.</p><button class="link-btn" data-tip-dismiss="accounts">Got it</button></div>
       <div class="tiles">
         <div class="tile"><div class="label">Net worth</div><div class="value" id="a-networth"></div></div>
         <div class="tile"><div class="label">Assets</div><div class="value" id="a-assets"></div></div>
@@ -493,7 +493,7 @@
         <details><summary>Why isn't one of my subscriptions showing?</summary>
           <p>Penny finds a subscription once it has charged 2 or 3 times on a regular schedule for about the same amount.
              If a company shows up under different names (like "Northwind" and "Northwind Billing"), combine them on the
-             Merchants page with <b>Combine…</b>. Check the <b>Hidden</b> list on Subscriptions too, in case it was hidden.</p></details>
+             Merchants page: click the merchant's <b>⋯</b> and <b>Combine with…</b>. Check the <b>Hidden</b> list on Subscriptions too, in case it was hidden.</p></details>
         <details><summary>What does "pending" mean?</summary>
           <p>Your bank hasn't finished processing that charge. Its amount can still change (restaurants add the tip later).
              Penny keeps your checkmarks and categories when it does.</p></details>
@@ -529,8 +529,8 @@
   <dialog id="manual-dialog">
     <form id="manual-form" method="dialog">
       <h2 id="manual-title"></h2>
-      <p>Penny counts it in your totals and in Coming up. If Penny also found it on its own, click
-         <b>Not recurring</b> on that one so it isn't counted twice.</p>
+      <p>Penny counts it in your totals and in Coming up. If Penny also found it on its own, choose
+         <b>Not recurring</b> in that one's <b>⋯</b> menu so it isn't counted twice.</p>
       <div class="form-grid">
         <label class="wide">Name<input name="name" required maxlength="60" autocomplete="off"></label>
         <label>Price of each charge<input name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"></label>

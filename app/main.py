@@ -977,7 +977,8 @@ def review_list(show: Literal["unchecked", "recent"] = "unchecked", limit: int =
     return {
         "remaining": remaining,
         "items": [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
-                             "name": name(r["merchant"]), "reviewed": bool(r["reviewed"]),
+                             "name": name(r["merchant"]), "bank_name": display_name(r["merchant"]),
+                             "reviewed": bool(r["reviewed"]),
                              "description_key": description_key(r["description"])} for r in rows],
     }
 
@@ -1242,6 +1243,11 @@ def get_subscriptions(conn=Depends(get_conn)):
         [dict(t) for t in txs], date.today(),
         names={m: name(m) for m in {t["merchant"] for t in txs}},
         overrides=overrides, kinds=kinds, bill_categories=bill_categories(conn))
+    # A subscription's own name wins over its merchant's; `merchant_name` stays for showing both.
+    custom = dict(conn.execute("SELECT key, name FROM recurring_names").fetchall())
+    merchant_names = {s.key: s.name for s in found}
+    for s in found:
+        s.name = custom.get(s.key, s.name)
     found += [subscriptions.manual(dict(r), date.today()) for r in conn.execute("SELECT * FROM manual_recurring")]
     found.sort(key=lambda r: (not r.active, -r.monthly_cost))
     active = [s for s in found if s.active and not s.ignored]
@@ -1253,7 +1259,7 @@ def get_subscriptions(conn=Depends(get_conn)):
         "yearly_total": total(active, "yearly_cost"),
         "subscriptions_monthly": total(subs, "monthly_cost"),
         "bills_monthly": total(bills, "monthly_cost"),
-        "items": [s.to_dict() for s in found],
+        "items": [s.to_dict() | {"merchant_name": merchant_names.get(s.key)} for s in found],
     }
 
 
@@ -1306,6 +1312,29 @@ def edit_manual_recurring(id: int, body: ManualRecurringBody, conn=Depends(get_c
 def delete_manual_recurring(id: int, conn=Depends(get_conn)):
     with conn:
         conn.execute("DELETE FROM manual_recurring WHERE id = ?", (id,))
+    return {"ok": True}
+
+
+class RecurringNameBody(BaseModel):
+    key: str
+    name: str  # blank goes back to the merchant's name
+
+
+@app.put("/api/subscriptions/name")
+def rename_recurring(body: RecurringNameBody, conn=Depends(get_conn)):
+    """Name one subscription or bill Penny found, without renaming its merchant
+    (Apple can bill for several things)."""
+    if body.key.startswith("manual:"):
+        fail(Exception("Use Edit to rename one you added yourself."))
+    name = " ".join(body.name.split())
+    if len(name) > 60:
+        fail(Exception("Keep names to 60 characters or fewer."))
+    with conn:
+        if name:
+            conn.execute("INSERT INTO recurring_names (key, name) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET name = excluded.name", (body.key, name))
+        else:
+            conn.execute("DELETE FROM recurring_names WHERE key = ?", (body.key,))
     return {"ok": True}
 
 

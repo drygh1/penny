@@ -73,3 +73,26 @@ def test_follows_category_rename_and_delete(client):
     assert manual_items(client)[0]["category"] == "Phone apps"
     client.delete("/api/categories", params={"name": "Phone apps", "move_to": "Entertainment"})
     assert manual_items(client)[0]["category"] == "Entertainment"
+
+
+def found_item(client, key):
+    return next(s for s in client.get("/api/subscriptions").json()["items"] if s["key"] == key)
+
+
+def test_rename_a_found_subscription_only(client):
+    key = found_item(client, "disney plus")["key"]
+    client.put("/api/subscriptions/name", json={"key": key, "name": "  Movie   night "})
+    s = found_item(client, key)
+    assert (s["name"], s["merchant_name"]) == ("Movie night", "Disney Plus")
+    merchants = {m["merchant"]: m["name"] for m in client.get("/api/merchants").json()}
+    assert merchants["disney plus"] == "Disney Plus"  # the merchant keeps its name
+
+    # Over a merchant you renamed too, the subscription's own name still wins.
+    client.put("/api/merchants/name", json={"merchant": "disney plus", "name": "Disney"})
+    s = found_item(client, key)
+    assert (s["name"], s["merchant_name"]) == ("Movie night", "Disney")
+
+    client.put("/api/subscriptions/name", json={"key": key, "name": ""})
+    assert found_item(client, key)["name"] == "Disney"
+    assert client.put("/api/subscriptions/name", json={"key": key, "name": "x" * 61}).status_code == 400
+    assert client.put("/api/subscriptions/name", json={"key": "manual:1", "name": "Nope"}).status_code == 400
