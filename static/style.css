@@ -262,6 +262,9 @@ main { max-width: 1160px; margin: 0 auto; padding: 28px 32px 48px; display: grid
 .rule-pattern { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .tx-merchant { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* "Rename" right after a merchant's name, always showing so it can be found. */
+.tx-rename { font-size: 12px; padding: 0 4px; margin-left: 6px; }
+.tx-name .rename-form input { flex: 1; min-width: 140px; }
 .badge {
   display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px;
   background: var(--warning-bg); color: var(--warning-ink); margin-left: 6px; font-weight: 500;

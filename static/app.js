@@ -731,7 +731,7 @@ async function loadTransactions() {
   $("#tx-body").innerHTML = rows.length
     ? rows.map((t) => `<tr>
         <td>${dayLabel(t.date)}</td>
-        <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<div class="meta">${esc(t.description)}</div></div></div></td>
+        <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<button class="link-btn tx-rename" data-tx-rename="${esc(t.merchant)}" data-name="${esc(t.name)}" data-bank-name="${esc(t.bank_name)}" aria-label="Rename ${esc(t.name)}">Rename</button><div class="meta">${esc(t.description)}</div></div></div></td>
         <td class="cat">${dot(t.category)}<select data-tx-id="${esc(t.id)}" aria-label="Category">${catOptions(t.category)}</select>${t.edited
           ? `<div class="meta tx-edited">Just this one ·
               <button class="link-btn" data-tx-reset="${esc(t.id)}" title="Back to ${esc(t.default_category)}">Reset</button> ·
@@ -760,6 +760,13 @@ $("#tx-body").addEventListener("change", async (e) => {
   refreshStatus();  // choosing a category checks it, so the Review count drops
 });
 $("#tx-body").addEventListener("click", async (e) => {
+  const rename = e.target.closest("[data-tx-rename]");
+  if (rename) {
+    // Renames the merchant, so every purchase from it changes, not just this row.
+    const { txRename: merchant, name, bankName } = rename.dataset;
+    renameMerchantForm(rename.closest(".tx-name"), { merchant, name, bankName }, () => loadTransactions());
+    return;
+  }
   const reset = e.target.closest("[data-tx-reset]");
   if (!reset) return;
   await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
@@ -817,33 +824,38 @@ function renderMerchants() {
   }).join("") : `<div class="empty">No merchants match.</div>`;
 }
 
-// Renaming swaps the name for a small form. Saving a blank name goes back to the
-// one Penny made from the bank's wording.
-$("#merchant-rows").addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-rename-merchant]");
-  if (!btn) return;
-  const m = merchantRows.find((r) => r.merchant === btn.dataset.renameMerchant);
-  const main = btn.closest(".main");
-  main.innerHTML = `<form class="row rename-form">
-      <input name="name" value="${esc(m.name)}" placeholder="${esc(m.bank_name)}" maxlength="60" aria-label="Name for ${esc(m.name)}">
+// Renaming a merchant swaps `box`'s contents for a small form, on the Merchants
+// and Transactions pages. Saving a blank name goes back to the one Penny made
+// from the bank's wording. `done` redraws the page either way.
+function renameMerchantForm(box, { merchant, name, bankName }, done) {
+  box.innerHTML = `<form class="row rename-form">
+      <input name="name" value="${esc(name)}" placeholder="${esc(bankName)}" maxlength="60" aria-label="Name for ${esc(name)}">
       <button class="btn small">Save</button>
       <button type="button" class="link-btn" data-rename-cancel>Cancel</button>
       <p class="msg"></p>
     </form>`;
-  const form = main.querySelector("form");
+  const form = box.querySelector("form");
   form.name.focus();
   form.name.select();
-  form.querySelector("[data-rename-cancel]").onclick = renderMerchants;
+  form.querySelector("[data-rename-cancel]").onclick = () => done(false);
   form.onsubmit = async (ev) => {
     ev.preventDefault();
     try {
-      await api("/api/merchants/name", { method: "PUT", body: { merchant: m.merchant, name: form.name.value } });
-      loadMerchants();
+      await api("/api/merchants/name", { method: "PUT", body: { merchant, name: form.name.value } });
+      done(true);
     } catch (err) {
       const msg = form.querySelector(".msg");
       msg.className = "msg error"; msg.textContent = err.message;
     }
   };
+}
+
+$("#merchant-rows").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-rename-merchant]");
+  if (!btn) return;
+  const m = merchantRows.find((r) => r.merchant === btn.dataset.renameMerchant);
+  renameMerchantForm(btn.closest(".main"), { merchant: m.merchant, name: m.name, bankName: m.bank_name },
+    (saved) => saved ? loadMerchants() : renderMerchants());
 });
 
 // ---------- a merchant's descriptions & description rules ----------

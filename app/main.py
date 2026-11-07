@@ -893,7 +893,7 @@ def transactions(month: str | None = None, category: str | None = None,
     rows = conn.execute(sql, (*params, limit)).fetchall()
     name = merchant_namer(conn)
     return [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
-                       "name": name(r["merchant"]),
+                       "name": name(r["merchant"]), "bank_name": display_name(r["merchant"]),
                        "description_key": description_key(r["description"])} for r in rows]
 
 

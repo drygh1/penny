@@ -88,3 +88,9 @@ def test_combining_keeps_a_name(client):
     client.put("/api/merchants/name", json={"merchant": "larkspur coffee", "name": "Larkspur"})
     client.post("/api/merchants/combine", json={"merchant": "starbucks", "others": ["larkspur coffee"]})
     assert merchant(client, "starbucks")["name"] == "Larkspur"  # starbucks had no name of its own
+
+
+def test_transactions_carry_both_names_for_renaming_there(client):
+    client.put("/api/merchants/name", json={"merchant": "starbucks", "name": "Corner Coffee"})
+    t = client.get("/api/transactions", params={"merchant": "starbucks"}).json()[0]
+    assert (t["name"], t["bank_name"]) == ("Corner Coffee", "Starbucks")
