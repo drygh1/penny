@@ -10,7 +10,11 @@ they're grouped by price and each group is checked on its own.
 
 Each one is a bill (rent, utilities: not something you'd cancel) or a
 subscription, going by its category unless the user moved it.
+
+Some can't be found this way (several subscriptions billed together, or under
+names that keep changing), so you can also add one yourself: see `manual`.
 """
+import calendar
 from dataclasses import dataclass, asdict
 from datetime import date, timedelta
 from statistics import median
@@ -27,6 +31,10 @@ CADENCES = [
     ("quarterly", 91.3, (80, 100)),
     ("yearly", 365.25, (340, 390)),
 ]
+
+CADENCE_NAMES = [name for name, _, _ in CADENCES]
+# How a subscription you added steps from one charge to the next: (days, months).
+STEPS = {"weekly": (7, 0), "every 2 weeks": (14, 0), "monthly": (0, 1), "quarterly": (0, 3), "yearly": (0, 12)}
 
 # Recurring charges in these categories are bills unless the user says otherwise.
 BILL_CATEGORIES = {"Housing", "Utilities & Bills"}
@@ -51,6 +59,7 @@ class Recurring:
     ignored: bool = False
     description_rule: str | None = None  # rule that set the category, if any
     kind: str = "subscription"           # or "bill"
+    manual_id: int | None = None         # set when you added it yourself
 
     def to_dict(self):
         return asdict(self)
@@ -160,6 +169,40 @@ def _by_price(txs: list) -> list[tuple[str, list]]:
         label = next((k for k, g in groups.items() if _same_price(price, -g[-1]["amount"])), None)
         groups.setdefault(label or f"{price:.2f}", []).append(t)
     return [(label, g) for label, g in groups.items() if len(g) >= 3]
+
+
+def _shift(start: date, cadence: str, k: int) -> date:
+    """The k-th charge after `start`. Monthly ones keep their day of the month,
+    falling back to the month's last day (a charge on the 31st is on the 30th in April)."""
+    days, months = STEPS[cadence]
+    if days:
+        return start + timedelta(days=days * k)
+    y, m = divmod(start.month - 1 + months * k, 12)
+    year, month = start.year + y, m + 1
+    return date(year, month, min(start.day, calendar.monthrange(year, month)[1]))
+
+
+def charge_dates(start: date, cadence: str, today: date) -> tuple[date | None, date]:
+    """The last charge before today (None if it hasn't started) and the next one, today or later."""
+    k, last, nxt = 0, None, start
+    while nxt < today:
+        last, k = nxt, k + 1
+        nxt = _shift(start, cadence, k)
+    return last, nxt
+
+
+def manual(row: dict, today: date) -> Recurring:
+    """A subscription or bill you added yourself: a row of manual_recurring."""
+    period = next(p for name, p, _ in CADENCES if name == row["cadence"])
+    last, nxt = charge_dates(date.fromisoformat(row["start_date"]), row["cadence"], today)
+    amount = round(row["amount"], 2)
+    return Recurring(
+        key=f"manual:{row['id']}", merchant="", name=row["name"], category=row["category"],
+        cadence=row["cadence"], amount=amount,
+        monthly_cost=round(amount * 30.44 / period, 2), yearly_cost=round(amount * 365.25 / period, 2),
+        last_date=last.isoformat() if last else None, next_date=nxt.isoformat(),
+        charge_count=0, active=True, previous_amount=None, price_changed_on=None,
+        kind=row["kind"], manual_id=row["id"])
 
 
 def detect(transactions, today: date, names=None, overrides=None, kinds=None, bill_categories=None) -> list[Recurring]:

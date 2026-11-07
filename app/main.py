@@ -739,7 +739,8 @@ def rename_category(body: CategoryRenameBody, conn=Depends(get_conn)):
     bills = bill_categories(conn)
     with conn:
         conn.execute("UPDATE categories SET name = ? WHERE name = ?", (new, old))
-        for table in ("transactions", "merchant_rules", "description_rules", "transaction_categories"):
+        for table in ("transactions", "merchant_rules", "description_rules", "transaction_categories",
+                      "manual_recurring"):
             conn.execute(f"UPDATE {table} SET category = ? WHERE category = ?", (new, old))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (new, old))
         conn.execute(
@@ -768,6 +769,7 @@ def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
         conn.execute("UPDATE merchant_rules SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE transaction_categories SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE description_rules SET category = ? WHERE category = ?", (move_to, name))
+        conn.execute("UPDATE manual_recurring SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (move_to, name))
         conn.execute(
             "INSERT INTO category_aliases (old_name, new_name) VALUES (?, ?) "
@@ -1240,6 +1242,8 @@ def get_subscriptions(conn=Depends(get_conn)):
         [dict(t) for t in txs], date.today(),
         names={m: name(m) for m in {t["merchant"] for t in txs}},
         overrides=overrides, kinds=kinds, bill_categories=bill_categories(conn))
+    found += [subscriptions.manual(dict(r), date.today()) for r in conn.execute("SELECT * FROM manual_recurring")]
+    found.sort(key=lambda r: (not r.active, -r.monthly_cost))
     active = [s for s in found if s.active and not s.ignored]
     total = lambda items, field: round(sum(getattr(s, field) for s in items), 2)
     subs = [s for s in active if s.kind == "subscription"]
@@ -1251,6 +1255,58 @@ def get_subscriptions(conn=Depends(get_conn)):
         "bills_monthly": total(bills, "monthly_cost"),
         "items": [s.to_dict() for s in found],
     }
+
+
+class ManualRecurringBody(BaseModel):
+    name: str
+    amount: float
+    cadence: str
+    next_date: date
+    category: str
+    kind: Literal["bill", "subscription"]
+
+
+def _manual_values(body: ManualRecurringBody, conn) -> tuple:
+    name = " ".join(body.name.split())
+    if not 1 <= len(name) <= 60:
+        fail(Exception("Give it a name of 1 to 60 characters."))
+    if not 0 < body.amount < 1_000_000:
+        fail(Exception("Enter the price of each charge, like 9.99."))
+    if body.cadence not in subscriptions.CADENCE_NAMES:
+        fail(Exception(f"Unknown schedule: {body.cadence}"))
+    if body.category not in db.category_names(conn):
+        fail(Exception(f"Unknown category: {body.category}"))
+    if body.next_date.year < 1990:
+        fail(Exception("Check the date of the next charge."))
+    return name, round(body.amount, 2), body.cadence, body.next_date.isoformat(), body.category, body.kind
+
+
+@app.post("/api/subscriptions/manual")
+def add_manual_recurring(body: ManualRecurringBody, conn=Depends(get_conn)):
+    """Add a subscription or bill yourself, for one Penny can't find on its own."""
+    values = _manual_values(body, conn)
+    with conn:
+        cur = conn.execute("INSERT INTO manual_recurring (name, amount, cadence, start_date, category, kind) "
+                           "VALUES (?, ?, ?, ?, ?, ?)", values)
+    return {"ok": True, "id": cur.lastrowid}
+
+
+@app.put("/api/subscriptions/manual/{id}")
+def edit_manual_recurring(id: int, body: ManualRecurringBody, conn=Depends(get_conn)):
+    values = _manual_values(body, conn)
+    with conn:
+        cur = conn.execute("UPDATE manual_recurring SET name = ?, amount = ?, cadence = ?, start_date = ?, "
+                           "category = ?, kind = ? WHERE id = ?", (*values, id))
+    if not cur.rowcount:
+        fail(Exception("That one was already deleted."))
+    return {"ok": True}
+
+
+@app.delete("/api/subscriptions/manual/{id}")
+def delete_manual_recurring(id: int, conn=Depends(get_conn)):
+    with conn:
+        conn.execute("DELETE FROM manual_recurring WHERE id = ?", (id,))
+    return {"ok": True}
 
 
 class KindBody(BaseModel):

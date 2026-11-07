@@ -335,6 +335,12 @@ dialog p { color: var(--text-2); }
 dialog select { width: 100%; }
 .dialog-actions { justify-content: flex-end; margin-top: 20px; }
 #combine-dialog { width: min(480px, calc(100vw - 32px)); }
+.form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.form-grid label { display: grid; gap: 4px; font-size: 13px; color: var(--text-2); min-width: 0; }
+.form-grid .wide { grid-column: 1 / -1; }
+.form-grid input, .form-grid select { width: 100%; min-width: 0; }
+#manual-dialog { width: min(480px, calc(100vw - 32px)); }
+@media (max-width: 480px) { .form-grid { grid-template-columns: minmax(0, 1fr); } }
 .rule-choice { display: flex; align-items: center; gap: 10px; padding: 6px 0; cursor: pointer; }
 .rule-choice input { width: auto; }
 #rule-pattern { width: 100%; margin-top: 4px; }

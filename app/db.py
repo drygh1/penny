@@ -71,6 +71,18 @@ CREATE TABLE IF NOT EXISTS merchant_aliases (
     merchant TEXT NOT NULL
 );
 
+-- Subscriptions and bills you added yourself, for ones Penny can't find on its
+-- own. start_date is a day it charges; the others step from it by cadence.
+CREATE TABLE IF NOT EXISTS manual_recurring (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    amount     REAL NOT NULL,   -- each charge, positive
+    cadence    TEXT NOT NULL,   -- weekly, every 2 weeks, monthly, quarterly, yearly
+    start_date TEXT NOT NULL,   -- YYYY-MM-DD
+    category   TEXT NOT NULL,
+    kind       TEXT NOT NULL    -- subscription or bill
+);
+
 -- Your own names for merchants. Without one, the name comes from the bank's wording.
 CREATE TABLE IF NOT EXISTS merchant_names (
     merchant TEXT PRIMARY KEY,

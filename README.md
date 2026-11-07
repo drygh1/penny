@@ -138,6 +138,10 @@ SimpleFIN only reaches back about 90 days. For older transactions:
 - **Automatic backups.** Penny copies its database once a day (when it starts, syncs or imports) and before anything destructive: deleting data, removing an import, deleting a category, or restoring. It keeps 14 daily and 12 monthly copies, plus the last 20 safety copies, in `~/Library/Application Support/Penny/backups`. That folder is outside the project, readable only by you, never synced to a cloud service, and included in Time Machine if you use it.
 - **Restore** any backup from **Settings → Your data → Restore a backup**. The current state is backed up first, so a restore can be undone.
 
+## Subscriptions you add yourself
+
+Penny finds most subscriptions and bills on its own, but some it can't: several subscriptions billed together, or a company whose charges come in under names that keep changing (Apple is a common one). On the **Subscriptions** page, click **Add one** under Subscriptions or Bills and enter the name, the price of each charge, how often it charges and the next charge date. Penny counts it in the monthly and yearly totals and in **Coming up** on the dashboard, and moves the next date forward on its own. Each one you added has **Edit** and **Delete**. If Penny also found the same charge, click **Not recurring** on Penny's one so it isn't counted twice. Adding one doesn't change any transactions.
+
 ## Merchant rules and pictures
 
 The **Merchants** page lists everyone you've paid. For each merchant you can:

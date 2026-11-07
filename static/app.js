@@ -646,7 +646,9 @@ async function loadSubscriptions() {
   $("#b-count").textContent = count(activeBills.length, "bill");
   $("#s-yearly").textContent = fmt0.format(subs.yearly_total);
 
+  manualItems = Object.fromEntries(subs.items.filter((s) => s.manual_id).map((s) => [s.manual_id, s]));
   const row = (s, action, label) => {
+    if (s.manual_id) return manualRow(s);
     const badge = s.previous_amount != null
       ? `<span class="badge">${s.amount > s.previous_amount ? "▲ Price up" : "▼ Price down"} from ${money(s.previous_amount)}</span>` : "";
     const meta = s.active
@@ -673,6 +675,76 @@ async function loadSubscriptions() {
   fill("#subs-inactive", inactive, "ignore", "Hide", "Nothing here.");
   fill("#subs-ignored", ignored, "restore", "Restore", "Nothing hidden.");
 }
+
+// ---------- subscriptions and bills you add yourself ----------
+// For ones Penny can't find on its own, like several subscriptions billed through Apple.
+
+let manualItems = {};  // manual_id -> item, from the last load
+
+function manualRow(s) {
+  return itemHTML({
+    title: s.name, meta: `${s.cadence} · next ${dayLabel(s.next_date)}`, amount: money(s.amount),
+    amountMeta: s.cadence === "monthly" ? "" : `${money(s.monthly_cost)}/mo`,
+    extra: `<span class="rule-tag">Added by you</span>`, category: s.category,
+    actions: `<div class="sub-buttons"><button class="link-btn" data-manual-edit="${s.manual_id}">Edit</button>
+      <button class="link-btn danger-link" data-manual-delete="${s.manual_id}">Delete</button></div>`,
+  });
+}
+
+function openManualDialog(kind, item = null) {
+  const form = $("#manual-form");
+  form.reset();
+  form.category.innerHTML = categoryNames().map((c) => `<option>${esc(c)}</option>`).join("");
+  form.dataset.id = item?.manual_id ?? "";
+  $("#manual-title").textContent = item ? `Edit ${item.name}` : `Add a ${kind}`;
+  $("#manual-save").textContent = item ? "Save" : "Add";
+  $("#manual-msg").textContent = "";
+  if (item) {
+    form.name.value = item.name;
+    form.amount.value = item.amount.toFixed(2);
+    form.cadence.value = item.cadence;
+    form.next_date.value = item.next_date;
+    form.category.value = item.category;
+    form.kind.value = item.kind;
+  } else {
+    const guess = kind === "bill" ? "Utilities & Bills" : "Subscriptions";
+    if (categoryNames().includes(guess)) form.category.value = guess;
+    form.cadence.value = "monthly";
+    form.kind.value = kind;
+  }
+  $("#manual-dialog").showModal();
+  form.name.focus();
+}
+
+$("#manual-cancel").onclick = () => $("#manual-dialog").close();
+
+$("#manual-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target, id = form.dataset.id;
+  const body = { name: form.name.value, amount: Number(form.amount.value), cadence: form.cadence.value,
+                 next_date: form.next_date.value, category: form.category.value, kind: form.kind.value };
+  try {
+    await api(id ? `/api/subscriptions/manual/${id}` : "/api/subscriptions/manual", { method: id ? "PUT" : "POST", body });
+    $("#manual-dialog").close();
+    loadSubscriptions();
+  } catch (err) {
+    $("#manual-msg").className = "msg error"; $("#manual-msg").textContent = err.message;
+  }
+};
+
+$("#view-subscriptions").addEventListener("click", async (e) => {
+  const add = e.target.closest("[data-manual-add]");
+  const edit = e.target.closest("[data-manual-edit]");
+  const del = e.target.closest("[data-manual-delete]");
+  if (add) openManualDialog(add.dataset.manualAdd);
+  else if (edit) openManualDialog(null, manualItems[edit.dataset.manualEdit]);
+  else if (del) {
+    const item = manualItems[del.dataset.manualDelete];
+    if (!confirm(`Delete ${item.name}? Your transactions aren't affected.`)) return;
+    await api(`/api/subscriptions/manual/${item.manual_id}`, { method: "DELETE" });
+    loadSubscriptions();
+  }
+});
 
 document.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-sub-action]");

@@ -184,18 +184,18 @@
     </section>
 
     <section id="view-subscriptions" class="view" hidden>
-      <div class="tip" data-tip="subscriptions" hidden><span class="tip-label">Tip</span><p>Penny finds charges that repeat on a schedule. A new one shows up after 2 or 3 charges. Use <b>Move to bills</b> for things you can't cancel, and <b>Not recurring</b> to hide anything that isn't.</p><button class="link-btn" data-tip-dismiss="subscriptions">Got it</button></div>
+      <div class="tip" data-tip="subscriptions" hidden><span class="tip-label">Tip</span><p>Penny finds charges that repeat on a schedule. A new one shows up after 2 or 3 charges. Use <b>Move to bills</b> for things you can't cancel, and <b>Not recurring</b> to hide anything that isn't. Missing one, like a subscription billed through Apple? Click <b>Add one</b>.</p><button class="link-btn" data-tip-dismiss="subscriptions">Got it</button></div>
       <div class="tiles">
         <div class="tile"><div class="label">Subscriptions</div><div class="value" id="s-monthly"></div><div class="sub" id="s-count"></div></div>
         <div class="tile"><div class="label">Bills</div><div class="value" id="b-monthly"></div><div class="sub" id="b-count"></div></div>
         <div class="tile"><div class="label">Yearly, both</div><div class="value" id="s-yearly"></div></div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>Subscriptions</h2><span class="muted">Things you could cancel</span></div>
+        <div class="card-head"><h2>Subscriptions</h2><div class="row"><span class="muted">Things you could cancel</span><button class="btn small secondary" data-manual-add="subscription">Add one</button></div></div>
         <div id="subs-active" class="list"></div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>Bills</h2><span class="muted">Rent, utilities and other must-pays</span></div>
+        <div class="card-head"><h2>Bills</h2><div class="row"><span class="muted">Rent, utilities and other must-pays</span><button class="btn small secondary" data-manual-add="bill">Add one</button></div></div>
         <div id="bills-active" class="list"></div>
       </div>
       <div class="card">
@@ -523,6 +523,30 @@
       <div class="row dialog-actions">
         <button class="btn secondary" value="cancel">Cancel</button>
         <button class="btn danger" value="delete">Delete category</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="manual-dialog">
+    <form id="manual-form" method="dialog">
+      <h2 id="manual-title"></h2>
+      <p>Penny counts it in your totals and in Coming up. If Penny also found it on its own, click
+         <b>Not recurring</b> on that one so it isn't counted twice.</p>
+      <div class="form-grid">
+        <label class="wide">Name<input name="name" required maxlength="60" autocomplete="off"></label>
+        <label>Price of each charge<input name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"></label>
+        <label>How often<select name="cadence">
+          <option value="weekly">Weekly</option><option value="every 2 weeks">Every 2 weeks</option>
+          <option value="monthly">Monthly</option><option value="quarterly">Every 3 months</option>
+          <option value="yearly">Yearly</option></select></label>
+        <label>Next charge<input name="next_date" type="date" required></label>
+        <label>Category<select name="category"></select></label>
+        <label class="wide">It's a<select name="kind"><option value="subscription">Subscription (something you could cancel)</option>
+          <option value="bill">Bill (rent, utilities and other must-pays)</option></select></label>
+      </div>
+      <p id="manual-msg" class="msg"></p>
+      <div class="row dialog-actions">
+        <button class="btn secondary" type="button" id="manual-cancel">Cancel</button>
+        <button class="btn" id="manual-save"></button>
       </div>
     </form>
   </dialog>
