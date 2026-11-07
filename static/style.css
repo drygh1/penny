@@ -109,6 +109,8 @@ h2 { font-size: 18px; }
 a { color: var(--accent); }
 .muted { color: var(--muted); font-size: 13px; }
 [hidden] { display: none !important; }
+/* Links that jump to a spot on the page stop below the sticky top bar, not under it. */
+[id] { scroll-margin-top: 88px; }
 
 /* Top bar */
 .topbar {
@@ -410,6 +412,7 @@ table.tx { width: 100%; border-collapse: collapse; }
 
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 16px; }
+  [id] { scroll-margin-top: 124px; }  /* the bar is two rows tall here */
   nav { order: 3; width: 100%; }
   main { padding: 16px; gap: 16px; }
   .hero { font-size: 32px; }

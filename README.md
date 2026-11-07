@@ -1,6 +1,6 @@
 # Penny
 
-A personal Rocket Money replacement that runs on your own computer. It tracks:
+A personal finance tracker that runs on your own computer. It tracks:
 
 - **Subscriptions and bills.** Penny finds recurring charges automatically and shows each one's monthly and yearly cost, the next charge date, price increases, and subscriptions that stopped charging. Bills you can't cancel (rent, utilities) are listed apart from subscriptions.
 - **Spending and income.** Charts by month or year, where your money went by category, where it came from by source, and your top merchants.
@@ -87,7 +87,7 @@ You can click **Try with demo data** to explore before connecting a real bank.
 Penny guesses categories from keywords, and the starting keywords were written around one
 person's banks. Expect to fix some at first. Every fix sticks for future transactions:
 
-- **Transactions page:** change one purchase's category. Click **Make a rule** under it to apply that to the whole merchant, or to descriptions like it.
+- **Transactions page:** change one purchase's category. Then click **⋯** at the end of the row and **Make a rule** to apply that to the whole merchant, or to descriptions like it.
 - **Merchants page:** set a merchant's default category, or **Combine** names that are really the same merchant (your bank might call your employer "Acme Corp" one month and "Acme Payroll" the next).
 - **Subscriptions page:** hide anything that isn't really recurring, and move items between Subscriptions and Bills.
 - **Net worth page:** give accounts something shorter than the bank's name with **Rename** in each one's **⋯** menu.
