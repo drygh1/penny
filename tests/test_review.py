@@ -100,3 +100,53 @@ def test_checks_survive_syncs_and_pending_charges_posting(tmp_path, monkeypatch)
     assert [t["description"] for t in r["items"]] == ["COFFEE CART"]
     gas = [t for t in client.get("/api/transactions").json() if t["description"] == "VALERO"]
     assert len(gas) == 1 and gas[0]["category"] == "Travel" and gas[0]["edited"]
+
+
+def only(client, amount):
+    return [t for t in client.get("/api/transactions").json() if t["amount"] == amount][0]
+
+
+def test_rule_from_an_edited_purchase_covers_the_merchant(client):
+    tx = only(client, -10)
+    client.put("/api/transaction-category", json={"id": tx["id"], "category": "Dining"})
+    assert client.post("/api/transaction-rule", json={"id": tx["id"]}).json()["ok"]
+
+    assert {t["category"] for t in client.get("/api/transactions").json()} == {"Dining"}
+    assert not only(client, -10)["edited"]  # it follows the rule now
+
+
+def test_rule_from_an_edited_purchase_can_cover_just_its_description(client):
+    tx = only(client, -10)
+    assert tx["description_key"] == "pinecrest grocery"
+    client.put("/api/transaction-category", json={"id": tx["id"], "category": "Dining"})
+    client.post("/api/transaction-rule", json={"id": tx["id"], "pattern": tx["description_key"]})
+    rules = client.get("/api/merchant-descriptions", params={"merchant": tx["merchant"]}).json()["rules"]
+    assert rules == [{"pattern": "pinecrest grocery", "category": "Dining"}]
+    assert not only(client, -10)["edited"] and only(client, -10)["category"] == "Dining"
+
+
+def test_purchase_keeps_its_category_when_the_rule_does_not_reach_it(client):
+    tx = only(client, -10)
+    client.put("/api/description-rules", json={"merchant": tx["merchant"], "pattern": "pinecrest", "category": "Travel"})
+    client.put("/api/transaction-category", json={"id": tx["id"], "category": "Dining"})
+
+    # The merchant's rule loses to the description rule, and a pattern can miss.
+    client.post("/api/transaction-rule", json={"id": tx["id"]})
+    client.post("/api/transaction-rule", json={"id": tx["id"], "pattern": "nothing like it"})
+    assert only(client, -10)["edited"] and only(client, -10)["category"] == "Dining"
+    assert only(client, -3)["category"] == "Travel"
+
+
+def test_rule_needs_words_and_a_real_transaction(client):
+    tx = only(client, -10)
+    assert client.post("/api/transaction-rule", json={"id": tx["id"], "pattern": "123"}).status_code == 400
+    assert client.post("/api/transaction-rule", json={"id": "gone"}).status_code == 400
+
+
+def test_transactions_can_be_fetched_by_id_past_any_filter(client):
+    """Review and Transactions keep a row you just changed, so its rule link stays."""
+    old = only(client, -200)
+    client.put("/api/transaction-category", json={"id": old["id"], "category": "Dining"})
+    assert client.get("/api/review", params={"show": "recent"}).json()["items"][-1]["id"] != old["id"]
+    rows = client.get("/api/transactions", params={"id": [old["id"]]}).json()
+    assert [t["id"] for t in rows] == [old["id"]] and rows[0]["edited"]

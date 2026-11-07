@@ -15,7 +15,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Penny</div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">P</span>Penny</div>
     <nav id="nav">
       <a href="#dashboard">Dashboard</a>
       <a href="#review">Review <span class="nav-count" id="review-count" hidden></span></a>
@@ -70,7 +70,10 @@
       <div id="guide" class="card guide" hidden></div>
       <div class="tip" data-tip="dashboard" hidden><span class="tip-label">Tip</span><p>Pick a month or a whole year at the top; everything on this page follows. Tap a bar, a slice or a category to see the transactions behind it. Transfers between your own accounts and credit card payments don't count as spending.</p><button class="link-btn" data-tip-dismiss="dashboard">Got it</button></div>
       <div class="period-bar">
-        <h1 id="period-title"></h1>
+        <div>
+          <h1 id="period-title"></h1>
+          <p class="hero" id="period-hero"></p>
+        </div>
         <div class="period-controls">
           <button class="btn secondary small" id="period-prev" aria-label="Previous period">‹</button>
           <select id="period-year" aria-label="Year"></select>
@@ -147,14 +150,21 @@
         <div id="merchant-list" class="list"></div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><h2>Coming up</h2><span class="muted">Next 30 days</span></div>
-        <div id="upcoming" class="list"></div>
+      <div class="grid-2 fit">
+        <div class="card">
+          <div class="card-head"><h2>Coming up</h2><span class="muted">Next 30 days</span></div>
+          <div id="upcoming" class="list"></div>
+        </div>
+        <div class="card feature-card" id="dash-review" hidden>
+          <h2 id="dash-review-title"></h2>
+          <div id="dash-review-list" class="list"></div>
+          <a class="btn" href="#review">Review them</a>
+        </div>
       </div>
     </section>
 
     <section id="view-review" class="view" hidden>
-      <div class="tip" data-tip="review" hidden><span class="tip-label">Tip</span><p>New transactions wait here until you've checked them. Click <b>✓</b> if Penny got the category right, or pick a better one. A new category changes just that purchase; click <b>Use for all</b> under it to change the whole merchant.</p><button class="link-btn" data-tip-dismiss="review">Got it</button></div>
+      <div class="tip" data-tip="review" hidden><span class="tip-label">Tip</span><p>New transactions wait here until you've checked them. Click <b>✓</b> if Penny got the category right, or pick a better one. A new category changes just that purchase; click <b>Make a rule</b> under it to change the whole merchant, or just descriptions like it.</p><button class="link-btn" data-tip-dismiss="review">Got it</button></div>
       <div class="card">
         <div class="card-head">
           <div>
@@ -199,14 +209,14 @@
     </section>
 
     <section id="view-transactions" class="view" hidden>
-      <div class="tip" data-tip="transactions" hidden><span class="tip-label">Tip</span><p>The category dropdown changes just that purchase. To change every purchase from that merchant, click <b>Use for all</b> under it afterward.</p><button class="link-btn" data-tip-dismiss="transactions">Got it</button></div>
+      <div class="tip" data-tip="transactions" hidden><span class="tip-label">Tip</span><p>The category dropdown changes just that purchase. To change more of them, click <b>Make a rule</b> under it afterward.</p><button class="link-btn" data-tip-dismiss="transactions">Got it</button></div>
       <div class="card">
         <div class="filters">
           <input id="tx-search" type="search" placeholder="Search">
           <select id="tx-month" aria-label="Month"><option value="">All months</option></select>
           <select id="tx-category" aria-label="Category"><option value="">All categories</option></select>
         </div>
-        <p class="muted hint">Changing a category applies to every transaction from that merchant. To treat some of a merchant's descriptions differently, open <a href="#merchants">Merchants</a> and choose <b>Descriptions</b>.</p>
+        <p class="muted hint">Changing a category changes just that purchase. Click <b>Make a rule</b> under it to apply it to the whole merchant or to descriptions like it. All of a merchant's rules are on <a href="#merchants">Merchants</a>, under <b>Descriptions</b>.</p>
         <div class="table-wrap">
           <table class="tx">
             <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
@@ -475,7 +485,7 @@
              <a href="#settings/import-card">Import older transactions</a>.</p></details>
         <details><summary>A transaction is in the wrong category. How do I fix it?</summary>
           <p>Pick the right category for it on the <a href="#review">Review</a> or <a href="#transactions">Transactions</a> page.
-             That changes just that purchase. To change every purchase from that place, click <b>Use for all</b> under it,
+             That changes just that purchase. To change every purchase from that place, or just ones with similar descriptions, click <b>Make a rule</b> under it,
              or set the merchant's category on the <a href="#merchants">Merchants</a> page. Penny remembers for future transactions too.</p></details>
         <details><summary>What is the Review page for?</summary>
           <p>It's an inbox for new transactions. Each one waits there until you've checked its category: click <b>✓</b> if it's right,
@@ -513,6 +523,20 @@
       <div class="row dialog-actions">
         <button class="btn secondary" value="cancel">Cancel</button>
         <button class="btn danger" value="delete">Delete category</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="rule-dialog">
+    <form id="rule-form" method="dialog">
+      <h2>Make a rule</h2>
+      <p id="rule-text"></p>
+      <label class="rule-choice"><input type="radio" name="scope" value="merchant"><span id="rule-merchant-label"></span></label>
+      <label class="rule-choice"><input type="radio" name="scope" value="description"><span>Only descriptions containing</span></label>
+      <input id="rule-pattern" aria-label="Description contains" autocomplete="off">
+      <p id="rule-msg" class="msg"></p>
+      <div class="row dialog-actions">
+        <button class="btn secondary" type="button" id="rule-cancel">Cancel</button>
+        <button class="btn">Make rule</button>
       </div>
     </form>
   </dialog>

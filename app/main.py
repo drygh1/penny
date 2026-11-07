@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -864,8 +864,11 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
 @app.get("/api/transactions")
 def transactions(month: str | None = None, category: str | None = None,
                  merchant: str | None = None, q: str | None = None,
+                 id: list[str] | None = Query(None),
                  limit: int = 300, conn=Depends(get_conn)):
     where, params = [], []
+    if id:  # these exact transactions, whatever their date or category
+        where.append(f"id IN ({','.join('?' * len(id))})"); params += id
     if month:  # a month ("2026-10") or a whole year ("2026")
         clause, values = period_filter(month)
         where.append(clause); params += values
@@ -881,7 +884,8 @@ def transactions(month: str | None = None, category: str | None = None,
     sql += " ORDER BY posted DESC LIMIT ?"
     rows = conn.execute(sql, (*params, limit)).fetchall()
     return [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
-                       "name": display_name(r["merchant"])} for r in rows]
+                       "name": display_name(r["merchant"]),
+                       "description_key": description_key(r["description"])} for r in rows]
 
 
 class RuleBody(BaseModel):
@@ -961,7 +965,8 @@ def review_list(show: Literal["unchecked", "recent"] = "unchecked", limit: int =
     return {
         "remaining": remaining,
         "items": [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(),
-                             "name": display_name(r["merchant"]), "reviewed": bool(r["reviewed"])} for r in rows],
+                             "name": display_name(r["merchant"]), "reviewed": bool(r["reviewed"]),
+                             "description_key": description_key(r["description"])} for r in rows],
     }
 
 
@@ -1016,6 +1021,30 @@ def set_description_rule(body: DescriptionRuleBody, conn=Depends(get_conn)):
 def delete_description_rule(merchant: str, pattern: str, conn=Depends(get_conn)):
     with conn:
         conn.execute("DELETE FROM description_rules WHERE merchant = ? AND pattern = ?", (merchant, pattern))
+    return {"ok": True}
+
+
+class TransactionRuleBody(BaseModel):
+    id: str
+    pattern: str | None = None  # None: the whole merchant
+
+
+@app.post("/api/transaction-rule")
+def make_transaction_rule(body: TransactionRuleBody, conn=Depends(get_conn)):
+    """Make a rule from a purchase's category. The purchase then follows the rule,
+    unless the rule doesn't reach it (a stronger description rule, or a pattern
+    that isn't in its description): then it keeps the category you gave it."""
+    tx_sql = f"SELECT merchant, category, default_category FROM ({TX_SELECT}) WHERE id = ?"
+    tx = conn.execute(tx_sql, (body.id,)).fetchone()
+    if not tx:
+        fail(Exception("That transaction no longer exists."))
+    if body.pattern is None:
+        set_rule(RuleBody(merchant=tx["merchant"], category=tx["category"]), conn)
+    else:
+        set_description_rule(DescriptionRuleBody(merchant=tx["merchant"], pattern=body.pattern,
+                                                 category=tx["category"]), conn)
+    if conn.execute(tx_sql, (body.id,)).fetchone()["default_category"] == tx["category"]:
+        reset_transaction_category(body.id, conn)
     return {"ok": True}
 
 

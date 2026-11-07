@@ -6,6 +6,8 @@ const fmt0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD"
 const money = (n) => fmt.format(n);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Charts draw text on a canvas, so they need the page's font named outright.
+if (window.Chart) Chart.defaults.font.family = '"Manrope", system-ui, -apple-system, sans-serif';
 const monthLabel = (ym, style = "short") => {
   const [y, m] = ym.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: style, year: style === "long" ? "numeric" : "2-digit" });
@@ -83,7 +85,7 @@ async function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
   const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), status.remote ? null : loadData(),
-                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: loadTransactions, merchants: loadMerchants, accounts: loadAccounts };
+                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: () => { keepVisible.clear(); return loadTransactions(); }, merchants: loadMerchants, accounts: loadAccounts };
   await Promise.all([loaders[view]?.(), hasData && loadGuide(view)]);
   if (view === "settings") showConnectState(anchor === "connect");
   if (anchor) document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -175,6 +177,7 @@ async function loadDashboard() {
     ? `${Math.round((b.net / b.income) * 100)}% of income` : "";
   $("#t-networth").textContent = fmt0.format(accounts.net_worth);
   $("#t-subs").textContent = `${money(subs.monthly_total)}/mo in subscriptions & bills`;
+  $("#period-hero").innerHTML = heroLine(b, ongoing);
 
   drawFlowChart(flow);
   // The picked month or year in words, under the chart. It stays put through the
@@ -192,11 +195,37 @@ async function loadDashboard() {
     .filter((s) => s.active && !s.ignored && s.next_date >= today && new Date(s.next_date) <= soon)
     .sort((a, b) => a.next_date.localeCompare(b.next_date));
   $("#upcoming").innerHTML = upcoming.length
-    ? upcoming.map((s) => itemHTML({
-        title: s.name, meta: `${s.cadence} · ${s.category}`, amount: money(s.amount),
-        amountMeta: dayLabel(s.next_date), category: s.category, merchant: s.merchant,
-      })).join("")
+    ? upcoming.map((s) => {
+        const [y, m, d] = s.next_date.split("-").map(Number);
+        const mon = new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short" }).toUpperCase();
+        return `<div class="item">
+          <div class="date-chip" aria-label="${esc(dayLabel(s.next_date))}"><div class="mon">${mon}</div><div class="day">${d}</div></div>
+          <div class="main"><div class="title">${esc(s.name)}</div><div class="meta">${dot(s.category)}${esc(`${s.cadence} · ${s.category}`)}</div></div>
+          <div class="amount">${money(s.amount)}</div>
+        </div>`;
+      }).join("")
     : `<div class="empty">Nothing expected in the next 30 days.</div>`;
+
+  // New purchases waiting on the Review page, in the dark card next to it.
+  const review = await api("/api/review?limit=3");
+  $("#dash-review").hidden = !review.remaining;
+  $("#dash-review-title").textContent =
+    `${review.remaining} new ${review.remaining === 1 ? "purchase" : "purchases"} to check`;
+  $("#dash-review-list").innerHTML = review.items.map((t) => itemHTML({
+    title: t.name, meta: t.category, amount: money(t.amount), category: t.category, merchant: t.merchant,
+  })).join("");
+}
+
+// The headline over the tiles: "You kept $2,237 of the $6,420 you made."
+function heroLine(b, ongoing) {
+  const kept = ongoing ? "So far you've kept" : "You kept";
+  const spent = ongoing ? "So far you've spent" : "You spent";
+  if (b.income > 0 && b.net >= 0)
+    return `${kept} <span class="good">${fmt0.format(b.net)}</span> of the ${fmt0.format(b.income)} you made.`;
+  if (b.income > 0)
+    return `${spent} <span class="bad">${fmt0.format(-b.net)}</span> more than the ${fmt0.format(b.income)} you made.`;
+  if (b.total > 0) return `${spent} ${fmt0.format(b.total)}.`;
+  return "Nothing here yet.";
 }
 
 // "▲ $321 vs September". Up is good for income, bad for spending.
@@ -471,13 +500,53 @@ $("#category-bars").addEventListener("click", (e) => {
 // ---------- review ----------
 // New transactions wait here until you check their category. ✓ confirms it;
 // picking another category changes just that purchase (and checks it), with
-// "Use for all" to change the merchant's default too.
+// "Make a rule" to change more than that one.
 
 let reviewShow = "unchecked";
 let reviewRemaining = 0;
-// In "Unchecked", a row you just changed stays until you leave the page, so its
-// "Use for all" link is still there to click.
+// On Review and Transactions, a row you just changed stays until you leave the
+// page (or change the filters), so its "Make a rule" link is still there to click.
 const keepVisible = new Set();
+
+async function withKept(rows, order) {
+  if (!keepVisible.size) return rows;
+  const kept = await api(`/api/transactions?${new URLSearchParams([...keepVisible].map((id) => ["id", id]))}`);
+  return [...kept, ...rows.filter((t) => !keepVisible.has(t.id))].sort(order);
+}
+
+// Offered under every purchase whose category you changed.
+const ruleButton = (t) => `<button class="link-btn" data-make-rule="${esc(t.id)}" data-name="${esc(t.name)}" data-category="${esc(t.category)}" data-key="${esc(t.description_key)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}>Make a rule</button>`;
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-make-rule]");
+  if (!btn) return;
+  const { makeRule: id, name, category, key, pattern } = btn.dataset;
+  const form = $("#rule-form");
+  form.dataset.id = id;
+  $("#rule-text").textContent = `Put these in ${category}, past and future. Purchases you changed one by one stay as they are.`;
+  // A description rule already decides this purchase, so changing that rule comes first.
+  $("#rule-merchant-label").textContent = `${pattern ? "Everything else" : "Everything"} from ${name}`;
+  form.scope.value = pattern ? "description" : "merchant";
+  $("#rule-pattern").value = pattern || key;
+  $("#rule-msg").textContent = "";
+  $("#rule-dialog").showModal();
+});
+
+$("#rule-pattern").onfocus = () => { $("#rule-form").scope.value = "description"; };
+$("#rule-cancel").onclick = () => $("#rule-dialog").close();
+
+$("#rule-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  try {
+    await api("/api/transaction-rule", { method: "POST", body: {
+      id: form.dataset.id, pattern: form.scope.value === "description" ? $("#rule-pattern").value : null } });
+    $("#rule-dialog").close();
+    $("#view-review").hidden ? loadTransactions() : loadReview();
+  } catch (err) {
+    $("#rule-msg").className = "msg error"; $("#rule-msg").textContent = err.message;
+  }
+};
 
 function showReviewCount(n) {
   reviewRemaining = n;
@@ -488,11 +557,7 @@ function showReviewCount(n) {
 
 async function loadReview() {
   const r = await api(`/api/review?show=${reviewShow}`);
-  if (reviewShow === "unchecked" && keepVisible.size) {
-    const recent = await api("/api/review?show=recent&limit=500");
-    const kept = recent.items.filter((t) => keepVisible.has(t.id));
-    r.items = [...kept, ...r.items.filter((t) => !keepVisible.has(t.id))].sort((a, b) => a.posted - b.posted);
-  }
+  if (reviewShow === "unchecked") r.items = await withKept(r.items, (a, b) => a.posted - b.posted);
   showReviewCount(r.remaining);
   document.querySelectorAll("[data-review-show]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.reviewShow === reviewShow));
   $("#review-title").textContent = reviewShow === "unchecked" ? "To review" : "Last 60 days";
@@ -509,8 +574,7 @@ function reviewRow(t) {
   const options = categoryNames().map((c) => `<option${c === t.category ? " selected" : ""}>${esc(c)}</option>`).join("");
   const id = esc(t.id);
   const after = t.edited
-    ? `<div class="meta review-after">Changed for this purchase ·
-         <button class="link-btn" data-review-all-merchant="${id}" data-merchant="${esc(t.merchant)}" data-category="${esc(t.category)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}>Use for all ${esc(t.name)}</button></div>` : "";
+    ? `<div class="meta review-after">Changed for this purchase · ${ruleButton(t)}</div>` : "";
   const check = t.reviewed
     ? `<button class="link-btn review-done" data-review-undo="${id}" title="Mark as not checked">Checked · Undo</button>`
     : `<button class="btn small secondary review-ok" data-review-ok="${id}" title="The category is right">✓</button>`;
@@ -546,7 +610,6 @@ $("#review-list").addEventListener("change", async (e) => {
 $("#review-list").addEventListener("click", async (e) => {
   const ok = e.target.closest("[data-review-ok]");
   const undo = e.target.closest("[data-review-undo]");
-  const all = e.target.closest("[data-review-all-merchant]");
   if (ok) {
     const row = ok.closest("[data-review-row]");
     if (reviewShow === "unchecked") row.remove();  // gone right away; the reload confirms it
@@ -554,13 +617,6 @@ $("#review-list").addEventListener("click", async (e) => {
   } else if (undo) {
     keepVisible.delete(undo.dataset.reviewUndo);
     await api("/api/review", { method: "POST", body: { ids: [undo.dataset.reviewUndo], reviewed: false } });
-  } else if (all) {
-    // Same as "Use for all" on the Transactions page: the merchant's default (or
-    // the description rule that set it) takes this category, and this purchase follows it.
-    const { merchant, category, pattern, reviewAllMerchant: id } = all.dataset;
-    if (pattern) await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category } });
-    else await api("/api/merchant-rules", { method: "PUT", body: { merchant, category } });
-    await api(`/api/transaction-category?id=${encodeURIComponent(id)}`, { method: "DELETE" });
   } else return;
   loadReview();
 });
@@ -670,7 +726,7 @@ async function loadTransactions() {
   $("#tx-search").value = txFilters.q;
 
   const params = new URLSearchParams(Object.entries(txFilters).filter(([, v]) => v));
-  const rows = await api(`/api/transactions?${params}`);
+  const rows = await withKept(await api(`/api/transactions?${params}`), (a, b) => b.posted - a.posted);
   const catOptions = (current) => categoryNames().map((c) => `<option${c === current ? " selected" : ""}>${esc(c)}</option>`).join("");
   $("#tx-body").innerHTML = rows.length
     ? rows.map((t) => `<tr>
@@ -679,7 +735,7 @@ async function loadTransactions() {
         <td class="cat">${dot(t.category)}<select data-tx-id="${esc(t.id)}" aria-label="Category">${catOptions(t.category)}</select>${t.edited
           ? `<div class="meta tx-edited">Just this one ·
               <button class="link-btn" data-tx-reset="${esc(t.id)}" title="Back to ${esc(t.default_category)}">Reset</button> ·
-              <button class="link-btn" data-tx-default="${esc(t.id)}" data-merchant="${esc(t.merchant)}" data-category="${esc(t.category)}"${t.description_rule ? ` data-pattern="${esc(t.description_rule)}"` : ""}>Use for all ${t.description_rule ? `“${esc(t.description_rule)}”` : esc(t.name)}</button></div>`
+              ${ruleButton(t)}</div>`
           : ""}</td>
         <td class="muted">${esc(t.account_name)}</td>
         <td class="num ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</td>
@@ -687,32 +743,26 @@ async function loadTransactions() {
     : `<tr><td colspan="5" class="empty">No transactions match.</td></tr>`;
 }
 
-$("#tx-month").onchange = (e) => { txFilters.month = e.target.value; loadTransactions(); };
-$("#tx-category").onchange = (e) => { txFilters.category = e.target.value; loadTransactions(); };
+const setTxFilter = (name, value) => { txFilters[name] = value; keepVisible.clear(); loadTransactions(); };
+$("#tx-month").onchange = (e) => setTxFilter("month", e.target.value);
+$("#tx-category").onchange = (e) => setTxFilter("category", e.target.value);
 $("#tx-search").oninput = (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { txFilters.q = e.target.value; loadTransactions(); }, 250);
+  searchTimer = setTimeout(() => setTxFilter("q", e.target.value), 250);
 };
 // The dropdown changes just that purchase. A merchant's default category is set
-// on the Merchants page, or from an edited purchase with "Use for all".
+// on the Merchants page, or from an edited purchase with "Make a rule".
 $("#tx-body").addEventListener("change", async (e) => {
   if (!e.target.matches("select[data-tx-id]")) return;
+  keepVisible.add(e.target.dataset.txId);
   await api("/api/transaction-category", { method: "PUT", body: { id: e.target.dataset.txId, category: e.target.value } });
   loadTransactions();
   refreshStatus();  // choosing a category checks it, so the Review count drops
 });
 $("#tx-body").addEventListener("click", async (e) => {
   const reset = e.target.closest("[data-tx-reset]");
-  const makeDefault = e.target.closest("[data-tx-default]");
-  if (reset) {
-    await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
-  } else if (makeDefault) {
-    const { merchant, category, pattern, txDefault } = makeDefault.dataset;
-    // A purchase under a description rule changes that rule, which wins over the merchant's default.
-    if (pattern) await api("/api/description-rules", { method: "PUT", body: { merchant, pattern, category } });
-    else await api("/api/merchant-rules", { method: "PUT", body: { merchant, category } });
-    await api(`/api/transaction-category?id=${encodeURIComponent(txDefault)}`, { method: "DELETE" });
-  } else return;
+  if (!reset) return;
+  await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
   loadTransactions();
 });
 
@@ -1712,7 +1762,9 @@ window.addEventListener("hashchange", route);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", route);
 
 (async () => {
-  await Promise.all([refreshCategories(), refreshStatus(), refreshLogos()]);
+  // Wait for the font (it's bundled, so this is quick) so charts don't draw in a fallback.
+  const font = document.fonts?.load('600 13px "Manrope"').catch(() => {});
+  await Promise.all([refreshCategories(), refreshStatus(), refreshLogos(), font]);
   route();
   checkForUpdate().catch(() => {});  // offline is fine; it tries again next launch
 })();

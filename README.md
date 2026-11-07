@@ -87,7 +87,7 @@ You can click **Try with demo data** to explore before connecting a real bank.
 Penny guesses categories from keywords, and the starting keywords were written around one
 person's banks. Expect to fix some at first. Every fix sticks for future transactions:
 
-- **Transactions page:** change one purchase's category. Click **Use for all** under it to make that the merchant's default.
+- **Transactions page:** change one purchase's category. Click **Make a rule** under it to apply that to the whole merchant, or to descriptions like it.
 - **Merchants page:** set a merchant's default category, or **Combine** names that are really the same merchant (your bank might call your employer "Acme Corp" one month and "Acme Payroll" the next).
 - **Subscriptions page:** hide anything that isn't really recurring, and move items between Subscriptions and Bills.
 - **Net worth page:** **Rename** accounts to something shorter than the bank's name.
@@ -147,7 +147,7 @@ The **Merchants** page lists everyone you've paid. For each merchant you can:
 - **Add a picture.** Click the circle or "Add picture" and choose a PNG or JPEG. The picture is cropped to a square, shrunk, and stored in the database. It shows up everywhere that merchant appears.
 - **Treat some descriptions differently.** Click **Descriptions** to see each different description the merchant uses, in full. For example, a payment app might use "...TYPE: CASHOUT..." and "...TYPE: PAYMENT...". Give any of them its own category, or add a rule like "description contains *cashout*". Numbers are ignored when matching, so trace and store numbers don't matter. A description rule beats the merchant's category, and the more specific rule wins.
 
-Changing a category on the **Transactions** page changes just that purchase, for a merchant that's usually one thing but sometimes another. An edited purchase keeps its category through syncs and rule changes. Under it, **Reset** sends it back to the merchant's default, and **Use for all** makes its category the default (or updates the description rule that set it).
+Changing a category on the **Transactions** or **Review** page changes just that purchase, for a merchant that's usually one thing but sometimes another. An edited purchase keeps its category through syncs and rule changes. Under it, **Reset** (on Transactions) sends it back to the merchant's default, and **Make a rule** applies its category to everything from the merchant or only to descriptions containing the words you choose. If a description rule set the purchase's category, that rule is the one offered first. The row stays on screen after you change it, even if it no longer matches your filters, until you leave the page or change the filters.
 
 ## Subscriptions and bills
 
