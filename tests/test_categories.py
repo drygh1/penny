@@ -144,7 +144,9 @@ def test_income_sources_keep_their_color_across_periods(client):
         for s in client.get("/api/spending/breakdown", params={"period": p}).json()["income_sources"]:
             assert slots.setdefault(s["merchant"], s["color_slot"]) == s["color_slot"]
     assert 1 in slots.values()
-    assert all(v is None or 1 <= v <= 6 for v in slots.values())
+    assert all(v is None or 1 <= v <= 20 for v in slots.values())
+    # Every source gets its own color, so the dashboard has no gray income slice.
+    assert None not in slots.values()
 
 
 def test_combining_merchants_and_separating_them_again(client):

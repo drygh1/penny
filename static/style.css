@@ -546,10 +546,6 @@ table.tx { width: 100%; border-collapse: collapse; }
 .pass-field input { flex: 1; min-width: 0; padding-right: 56px; }
 .pass-field .link-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
 
-/* The picked month or year, in words, under the Income & spending chart */
-.flow-summary { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 12px 0 0; font-size: 14px; color: var(--text-2); }
-.flow-summary b { color: var(--text); font-weight: 600; }
-
 /* First screen and help */
 .welcome .login-icon { border-radius: 18px; margin-bottom: 8px; }
 .start-options .card { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
@@ -562,3 +558,11 @@ table.tx { width: 100%; border-collapse: collapse; }
 .faq-card details p { margin: 8px 0 0; color: var(--text-2); font-size: 14px; }
 .credit-row { border-top: 1px dashed var(--border); padding-top: 8px; }
 .credit-row .bar-label, .credit-row .bar-value { color: var(--text-2); }
+
+/* ‹ 2026 › beside the net worth chart's All / Year / Month */
+.nw-step { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 700; color: var(--text); }
+.nw-step[hidden] { display: none; }
+.nw-step span { min-width: 7.5em; text-align: center; }
+.nw-step .btn.small { width: 32px; height: 32px; padding: 0 0 2px; font-size: 18px; line-height: 1; border-radius: 50%; }
+.nw-step .btn.small:disabled { opacity: 0.35; cursor: default; }
+#nw-change { display: block; font-size: 13px; font-weight: 600; margin-top: 4px; }

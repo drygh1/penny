@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from . import auth, backup, db, demo, importer, pdf_statements, remote, simplefin, subscriptions
 from .categorize import (COLOR_SLOTS, FIXED_NAMES, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
                          institution_words, normalize_merchant)
-from .sync import (card_money_in, match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, upsert_account,
+from .sync import (card_money_in, match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, transfer_pairs, upsert_account,
                    upsert_transaction)
 
 # Inside the Mac app (PyInstaller), bundled files sit under sys._MEIPASS.
@@ -145,9 +145,10 @@ TX_SELECT = """
         ORDER BY length(d2.pattern) DESC LIMIT 1)
 """
 SPENDING_FILTER = "category NOT IN ({})".format(",".join(f"'{c}'" for c in NON_SPENDING))
-# Income sources colored on the dashboard, using the first color slots (checked
-# for colorblind separation in that order, light and dark).
-INCOME_COLORS = 6
+# Income sources colored on the dashboard, using the color slots in their
+# colorblind-checked order. One per palette color, so in practice every source
+# gets its own and only past the 20th do they share the gray slice.
+INCOME_COLORS = 20
 
 
 def merchant_namer(conn):
@@ -559,7 +560,9 @@ def accounts(conn=Depends(get_conn)):
     by_day: dict[str, float] = {}
     for s in snaps:
         latest[s["account_id"]] = s["balance"]
-        by_day[s["day"]] = round(sum(latest.values()), 2)
+        by_day[s["day"]] = sum(latest.values())
+    in_flight = transfers_in_flight(conn)
+    by_day = {d: round(v - in_flight(d), 2) for d, v in by_day.items()}
 
     return {
         "accounts": rows,
@@ -568,6 +571,35 @@ def accounts(conn=Depends(get_conn)):
         "net_worth": round(assets + debts, 2),
         "history": [{"day": d, "net_worth": v} for d, v in by_day.items()],
     }
+
+
+def transfers_in_flight(conn):
+    """A function of day: money one of your accounts already shows that the other hasn't.
+
+    Each bank posts its side of a transfer or card payment when it gets to it:
+    a card can show a $3,715 payment on Oct 31 while checking only takes it out
+    on Nov 2. In between, the money is counted twice (or, the other way round,
+    not at all), and net worth jumps for a couple of days. Subtracting the side
+    already posted, until the other side posts too, takes the jump out.
+
+    A recorded balance includes what posted before that day (banks report
+    balances a day behind their transaction dates); balances rebuilt from
+    transactions (before an account's first sync) include that day's too.
+    """
+    rows = conn.execute(
+        "SELECT t.account_id, t.posted, t.amount FROM transactions t JOIN accounts a ON a.id = t.account_id "
+        "WHERE a.hidden = 0 AND t.amount != 0 AND t.category IN ('Transfers', 'Credit Card Payments') "
+        "ORDER BY t.posted").fetchall()
+    first_sync = dict(conn.execute("SELECT account_id, MIN(day) FROM balance_snapshots GROUP BY account_id").fetchall())
+    sides = [(s["account_id"], date.fromtimestamp(s["posted"]).isoformat(), s["amount"])
+             for w, d in transfer_pairs(rows)
+             if date.fromtimestamp(w["posted"]) != date.fromtimestamp(d["posted"]) for s in (w, d)]
+
+    def counted_twice(day: str) -> float:
+        # Once both sides have posted they cancel out, so only a lone side adds up.
+        return sum(amount for account_id, posted, amount in sides
+                   if (posted < day if day >= first_sync.get(account_id, day) else posted <= day))
+    return counted_twice
 
 
 def _walk_back(account_id, day0: date, balance: float, txs, until: date, anchor: date, floor=None) -> list[dict]:

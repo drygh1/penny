@@ -139,3 +139,26 @@ def test_chart_and_breakdown_always_agree(client):
     b = client.get("/api/spending/breakdown", params={"period": period}).json()
     assert b["total"] == chart
     assert [c["category"] for c in b["credits"]] == ["Travel"]
+
+
+def test_card_payment_posted_days_apart_does_not_bump_net_worth(client):
+    """The card shows the payment on day 1, checking takes it out on day 3. Net
+    worth must not count that money twice in between."""
+    import time
+    from app import db
+    today = date.today()
+    day = lambda n: (today - timedelta(days=n)).isoformat()
+    noon = lambda n: int(time.mktime((today - timedelta(days=n)).timetuple())) + 12 * 3600
+    conn = db.connect()
+    with conn:
+        conn.execute("INSERT INTO accounts (id, org_name, name, balance) VALUES ('chk', 'Westfield Credit Union', 'Checking', 1000)")
+        conn.execute("INSERT INTO accounts (id, org_name, name, balance) VALUES ('card', 'Summit Bank', 'Visa', 0)")
+        for tid, acct, n, amt in (("pay-card", "card", 4, 3000), ("pay-chk", "chk", 2, -3000)):
+            conn.execute("INSERT INTO transactions (id, account_id, posted, amount, description, merchant, category) "
+                         "VALUES (?, ?, ?, ?, 'PAYMENT', 'payment', 'Credit Card Payments')", (tid, acct, noon(n), amt))
+        # A bank's balance shows a transaction the day after its date.
+        for n, chk, card in ((5, 4000, -3000), (4, 4000, -3000), (3, 4000, 0), (2, 4000, 0), (1, 1000, 0), (0, 1000, 0)):
+            conn.executemany("INSERT INTO balance_snapshots (account_id, day, balance) VALUES (?, ?, ?)",
+                             [("chk", day(n), chk), ("card", day(n), card)])
+    history = client.get("/api/accounts").json()["history"]
+    assert {h["day"]: h["net_worth"] for h in history if h["day"] >= day(5)} == {day(n): 1000 for n in range(6)}

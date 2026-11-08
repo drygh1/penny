@@ -180,12 +180,6 @@ async function loadDashboard() {
   $("#period-hero").innerHTML = heroLine(b, ongoing);
 
   drawFlowChart(flow);
-  // The picked month or year in words, under the chart. It stays put through the
-  // redraw, unlike the chart's pop-up, which a tap on a phone barely shows.
-  const net = b.income - b.total;
-  $("#flow-summary").innerHTML = `<b>${esc(periodLabel())}${ongoing ? " so far" : ""}</b>
-    <span>Income ${money(b.income)}</span><span>Spending ${money(b.total)}</span>
-    <span class="${net < 0 ? "negative-text" : ""}">${net < 0 ? "Overspent" : "Saved"} ${money(Math.abs(net))}</span>`;
   renderBreakdown(b);
 
   // Upcoming charges in the next 30 days
@@ -398,8 +392,8 @@ function renderIncome(b) {
         </div>`).join("")
     : `<div class="empty">No income in ${periodLabel(b.period)}.</div>`;
 
-  // Slices in color-slot order, like the spending donut; uncolored sources
-  // (and any past the top 10 listed) share one gray slice.
+  // Slices in color-slot order, like the spending donut. Any sources past the
+  // top 10 listed (or past the 20 colors) share one gray slice.
   const colored = sources.filter((s) => s.color_slot).sort((x, y) => x.color_slot - y.color_slot);
   const slices = colored.map((s) => ({ label: s.name, value: s.total, color: css(`--series-${s.color_slot}`), merchant: s.merchant }));
   const rest = Math.round((b.income - colored.reduce((sum, s) => sum + s.total, 0)) * 100) / 100;
@@ -1278,22 +1272,84 @@ function squareImage(file, size = 160) {
 
 // ---------- accounts / net worth ----------
 
-async function loadAccounts() {
-  const a = await api("/api/accounts");
-  $("#a-networth").textContent = fmt0.format(a.net_worth);
-  $("#a-assets").textContent = fmt0.format(a.assets);
-  $("#a-debts").textContent = fmt0.format(Math.abs(a.debts));
+// The net worth chart shows all of it, one year, or one month. The view is
+// remembered in this browser only; the year or month starts at the latest.
+let nwHistory = [];
+let nwView = "all";
+let nwPick = "";  // "2026" or "2026-11" for the year and month views
+try { nwView = ["year", "month"].includes(localStorage.getItem("penny.nwView")) ? localStorage.getItem("penny.nwView") : "all"; } catch {}
 
+// The years or months the history covers, oldest first.
+function nwPeriods() {
+  const len = nwView === "year" ? 4 : 7;
+  return [...new Set(nwHistory.map((h) => h.day.slice(0, len)))];
+}
+
+function drawNetWorth() {
+  document.querySelectorAll("[data-nw-view]").forEach((btn) => btn.setAttribute("aria-pressed", btn.dataset.nwView === nwView));
+  const periods = nwView === "all" ? [] : nwPeriods();
+  // Going from a year to months starts at that year's last month, and back again.
+  const near = periods.filter((p) => p.startsWith(nwPick.slice(0, 4)));
+  if (periods.length && !periods.includes(nwPick)) nwPick = (nwPick && near.length ? near : periods).at(-1);
+  $("#nw-step").hidden = !periods.length;
+  let points = nwHistory;
+  if (periods.length) {
+    const i = periods.indexOf(nwPick);
+    $("#nw-prev").disabled = i === 0;
+    $("#nw-next").disabled = i === periods.length - 1;
+    $("#nw-label").textContent = nwView === "year" ? nwPick : monthLabel(nwPick, "long");
+    points = nwHistory.filter((h) => h.day.startsWith(nwPick));
+    // Start the line on the 1st with the balance carried over from before.
+    const start = nwView === "year" ? `${nwPick}-01-01` : `${nwPick}-01`;
+    const before = nwHistory.filter((h) => h.day < start).pop();
+    if (before && points[0].day > start) points = [{ day: start, net_worth: before.net_worth }, ...points];
+  }
+
+  const change = points.length > 1 ? points[points.length - 1].net_worth - points[0].net_worth : 0;
+  const when = nwView === "all" ? "since " + dayLabel(points[0]?.day || isoDay(new Date()), true)
+    : nwView === "year" ? `in ${nwPick}` : `in ${monthLabel(nwPick, "long").split(" ")[0]}`;
+  $("#nw-change").innerHTML = points.length > 1
+    ? `<span class="${change < 0 ? "delta-up" : "delta-down"}">${change < 0 ? "▼" : "▲"} ${fmt0.format(Math.abs(change))}</span> ${esc(when)}` : "";
+
+  // Points sit at their real dates: older history is weekly and recent days are
+  // daily, and spacing them evenly would stretch the last few days across the chart.
+  const date = (day) => new Date(day + "T12:00:00");
+  const time = (day) => date(day).getTime();
+  // A year or month spans all of it, so this one's line stops partway, at today.
+  const last = nwView === "all" ? points.at(-1)?.day
+    : nwView === "year" ? `${nwPick}-12-31` : isoDay(new Date(Number(nwPick.slice(0, 4)), Number(nwPick.slice(5)), 0));
+  const tickDays = () => {
+    if (!points.length) return [];
+    const first = points[0].day;
+    if (nwView === "month") {
+      return [1, 8, 15, 22, 29].map((d) => `${nwPick}-${String(d).padStart(2, "0")}`).filter((d) => d <= last);
+    }
+    // Month starts, thinned to at most 8 labels.
+    const months = [];
+    for (let y = Number(first.slice(0, 4)), m = Number(first.slice(5, 7)); ; m++) {
+      if (m > 12) { m = 1; y++; }
+      const d = `${y}-${String(m).padStart(2, "0")}-01`;
+      if (d > last) break;
+      if (d >= first) months.push(d);
+    }
+    const every = Math.ceil(months.length / 8);
+    return months.filter((_, i) => i % every === 0);
+  };
+  const tick = nwView === "month" ? { month: "short", day: "numeric" }
+    : nwView === "year" ? { month: "short" } : { month: "short", year: "2-digit" };
   const o = baseChartOptions();
-  o.plugins.tooltip.callbacks.title = (items) => new Date(a.history[items[0].dataIndex].day + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  o.scales.x.ticks.maxTicksLimit = 8;
+  o.plugins.tooltip.callbacks.title = (items) => date(points[items[0].dataIndex].day).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  o.scales.x = { ...o.scales.x, type: "linear", min: points.length ? time(points[0].day) : undefined,
+    max: points.length ? time(last) : undefined,
+    afterBuildTicks: (axis) => { axis.ticks = tickDays().map((d) => ({ value: time(d) })); },
+    ticks: { ...o.scales.x.ticks, autoSkip: false, maxRotation: 0,
+             callback: (v) => new Date(v).toLocaleDateString("en-US", tick) } };
   o.scales.y.beginAtZero = false;
   drawChart("chart-networth", {
     type: "line",
     data: {
-      labels: a.history.map((h) => new Date(h.day + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "2-digit" })),
       datasets: [{
-        data: a.history.map((h) => h.net_worth),
+        data: points.map((h) => ({ x: time(h.day), y: h.net_worth })),
         borderColor: css("--accent"), borderWidth: 2, cubicInterpolationMode: "monotone",
         pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: css("--accent"),
         pointHoverBorderColor: css("--surface"), pointHoverBorderWidth: 2,
@@ -1302,6 +1358,29 @@ async function loadAccounts() {
     },
     options: o,
   });
+}
+
+document.querySelectorAll("[data-nw-view]").forEach((btn) => btn.onclick = () => {
+  nwView = btn.dataset.nwView;
+  try { localStorage.setItem("penny.nwView", nwView); } catch {}
+  drawNetWorth();
+});
+for (const [id, step] of [["#nw-prev", -1], ["#nw-next", 1]]) {
+  $(id).onclick = () => {
+    const periods = nwPeriods();
+    nwPick = periods[periods.indexOf(nwPick) + step] ?? nwPick;
+    drawNetWorth();
+  };
+}
+
+async function loadAccounts() {
+  const a = await api("/api/accounts");
+  $("#a-networth").textContent = fmt0.format(a.net_worth);
+  $("#a-assets").textContent = fmt0.format(a.assets);
+  $("#a-debts").textContent = fmt0.format(Math.abs(a.debts));
+
+  nwHistory = a.history;
+  drawNetWorth();
 
   const accountRow = (acc) => `<div data-account-row="${esc(acc.id)}">${itemHTML({
         title: acc.name,

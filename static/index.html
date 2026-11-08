@@ -104,7 +104,6 @@
           </div>
         </div>
         <div class="chart-box"><canvas id="chart-monthly" aria-label="Income and spending bar chart"></canvas></div>
-        <p class="flow-summary" id="flow-summary" aria-live="polite"></p>
         <p class="muted hint" id="flow-hint"></p>
       </div>
 
@@ -254,7 +253,24 @@
         <div class="tile"><div class="label">Debts</div><div class="value" id="a-debts"></div></div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>Net worth over time</h2></div>
+        <div class="card-head">
+          <div>
+            <h2>Net worth over time</h2>
+            <span class="muted" id="nw-change"></span>
+          </div>
+          <div class="flow-tools">
+            <div class="nw-step" id="nw-step" hidden>
+              <button class="btn secondary small" id="nw-prev" aria-label="Earlier">‹</button>
+              <span id="nw-label"></span>
+              <button class="btn secondary small" id="nw-next" aria-label="Later">›</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Show net worth for">
+              <button type="button" data-nw-view="all" aria-pressed="true">All</button>
+              <button type="button" data-nw-view="year" aria-pressed="false">Year</button>
+              <button type="button" data-nw-view="month" aria-pressed="false">Month</button>
+            </div>
+          </div>
+        </div>
         <div class="chart-box"><canvas id="chart-networth" aria-label="Net worth line chart"></canvas></div>
       </div>
       <div class="grid-2 fit">

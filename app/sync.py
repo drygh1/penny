@@ -138,15 +138,26 @@ def match_transfers(conn) -> int:
     rows = conn.execute(
         "SELECT id, account_id, posted, amount, category FROM transactions WHERE amount != 0 ORDER BY posted"
     ).fetchall()
+    paired = []
+    for w, d in transfer_pairs([r for r in rows if r["category"] in _PAIRABLE]):
+        card = "Credit Card Payments" in (w["category"], d["category"])
+        paired += [(i, "Credit Card Payments" if card else "Transfers") for i in (w["id"], d["id"])]
+    conn.executemany("UPDATE transactions SET category = ? WHERE id = ? AND category != ?",
+                     [(cat, i, cat) for i, cat in paired])
+    return len(paired) // 2
+
+
+def transfer_pairs(rows):
+    """(withdrawal, deposit) pairs: the same amount out of one account and into
+    another within TRANSFER_WINDOW_DAYS. `rows` need account_id, posted and
+    amount, sorted by posted; each deposit pairs with the nearest withdrawal."""
     deposits: dict[int, list] = {}
     for r in rows:
-        if r["amount"] > 0 and r["category"] in _PAIRABLE:
+        if r["amount"] > 0:
             deposits.setdefault(round(r["amount"] * 100), []).append(r)
-
     window = TRANSFER_WINDOW_DAYS * 86400
-    paired = []
     for w in rows:
-        if w["amount"] >= 0 or w["category"] not in _PAIRABLE:
+        if w["amount"] >= 0:
             continue
         candidates = [d for d in deposits.get(round(-w["amount"] * 100), [])
                       if d["account_id"] != w["account_id"] and abs(d["posted"] - w["posted"]) <= window]
@@ -154,11 +165,7 @@ def match_transfers(conn) -> int:
             continue
         d = min(candidates, key=lambda d: abs(d["posted"] - w["posted"]))
         deposits[round(d["amount"] * 100)].remove(d)
-        card = "Credit Card Payments" in (w["category"], d["category"])
-        paired += [(i, "Credit Card Payments" if card else "Transfers") for i in (w["id"], d["id"])]
-    conn.executemany("UPDATE transactions SET category = ? WHERE id = ? AND category != ?",
-                     [(cat, i, cat) for i, cat in paired])
-    return len(paired) // 2
+        yield w, d
 
 
 MARK_MATCH_DAYS = 7
