@@ -128,6 +128,23 @@ def test_bank_of_america_autopay_on_the_card_is_a_card_payment(client):
     assert month["spending"] == 80.00
 
 
+def test_friend_paying_you_back_is_not_income(client):
+    """A Venmo payback isn't income; given the purchase's category, it lowers that spending."""
+    new_account(client, "Checking", [(this_month, "PINECREST GROCERY", -100.00),
+                                     (this_month + timedelta(days=1),
+                                      "Deposit ACH VENMO TYPE: CASHOUT CO: VENMOACH Trace 091000010137860", 50.00)])
+    period = f"{this_month:%Y-%m}"
+    b = client.get("/api/spending/breakdown", params={"period": period}).json()
+    assert (b["income"], b["total"], b["income_sources"]) == (0, 100.00, [])
+
+    venmo = next(t for t in client.get("/api/transactions").json() if "VENMO" in t["description"])
+    assert venmo["category"] == "Reimbursements"
+    client.put("/api/transaction-category", json={"id": venmo["id"], "category": "Groceries"})
+    b = client.get("/api/spending/breakdown", params={"period": period}).json()
+    assert (b["income"], b["total"]) == (0, 50.00)
+    assert client.delete("/api/categories", params={"name": "Reimbursements"}).status_code == 400
+
+
 def test_chart_and_breakdown_always_agree(client):
     """Money back that outweighs a category's spending lowers both totals the same way."""
     new_account(client, "Checking", [(this_month, "PINECREST GROCERY", -100.00),
@@ -162,3 +179,52 @@ def test_card_payment_posted_days_apart_does_not_bump_net_worth(client):
                              [("chk", day(n), chk), ("card", day(n), card)])
     history = client.get("/api/accounts").json()["history"]
     assert {h["day"]: h["net_worth"] for h in history if h["day"] >= day(5)} == {day(n): 1000 for n in range(6)}
+
+
+def test_transfer_from_an_app_is_not_your_own_transfer(client):
+    """"Transfer from Venmo" and "Transfer from Account 10" are different merchants,
+    so naming one doesn't rename the other."""
+    from app.categorize import normalize_merchant
+    assert normalize_merchant("DEPOSIT ACH VENMO", "Transfer from Venmo") == "venmo"
+    assert normalize_merchant("From Share 10", "Transfer from Account 10") == "transfer from"
+    assert normalize_merchant("To Share 70", "Transfer to Share 70") == "transfer to"
+
+
+def test_older_shared_merchant_keys_are_split(client):
+    from app import db, sync
+    client.get("/api/status")
+    conn = db.connect()
+    with conn:
+        conn.execute("INSERT INTO accounts (id, org_name, name, balance) VALUES ('chk', 'Westfield Credit Union', 'Checking', 0)")
+        for tid, desc, payee in (("v", "DEPOSIT ACH VENMO CASHOUT", "Transfer from Venmo"),
+                                 ("s", "From Share 10", "Transfer from Account 10")):
+            conn.execute("INSERT INTO transactions (id, account_id, posted, amount, description, payee, merchant, category) "
+                         "VALUES (?, 'chk', 1, 50, ?, ?, 'transfer from', 'Other')", (tid, desc, payee))
+    sync.rekey_shared_merchants(conn)
+    keys = dict(conn.execute("SELECT id, merchant FROM transactions").fetchall())
+    assert keys == {"v": "venmo", "s": "transfer from"}
+
+
+def test_rules_page_lists_every_rule_and_flags_mixed_merchants(client):
+    new_account(client, "Savings", [(this_month, "MOVE FUNDS REF 8812", -5000.00)])
+    new_account(client, "Checking", [(this_month + timedelta(days=1), "INCOMING REF 8812", 5000.00),
+                                     (this_month, "INCOMING VENMO CASHOUT", 40.00),
+                                     (this_month, "PINECREST GROCERY", -40.00)])
+    by_desc = {t["description"]: t for t in client.get("/api/transactions").json()}
+    # Put a transfer and a Venmo payment under one name, like two merchants mixed up.
+    client.post("/api/merchants/combine", json={"merchant": by_desc["INCOMING VENMO CASHOUT"]["merchant"],
+                                                "others": [by_desc["INCOMING REF 8812"]["merchant"]]})
+    venmo = by_desc["INCOMING VENMO CASHOUT"]["merchant"]
+    client.put("/api/merchants/name", json={"merchant": venmo, "name": "Venmo"})
+    client.put("/api/merchant-rules", json={"merchant": "pinecrest grocery", "category": "Groceries"})
+    client.put("/api/transaction-category", json={"id": by_desc["PINECREST GROCERY"]["id"], "category": "Dining"})
+
+    r = client.get("/api/rules").json()
+    [name] = r["names"]
+    assert (name["rule_name"], name["count"], name["mixed"]) == ("Venmo", 2, True)
+    assert {c["category"] for c in name["auto_categories"]} == {"Transfers", "Reimbursements"}
+    [rule] = r["merchant_categories"]
+    assert (rule["rule_category"], rule["mixed"]) == ("Groceries", False)
+    assert len(r["combined"]) == 1 and r["combined"][0]["mixed"]
+    [one] = r["transaction_categories"]
+    assert (one["category"], one["default_category"]) == ("Dining", "Groceries")

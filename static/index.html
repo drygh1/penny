@@ -22,6 +22,7 @@
       <a href="#subscriptions">Subscriptions</a>
       <a href="#transactions">Transactions</a>
       <a href="#merchants">Merchants</a>
+      <a href="#rules">Rules</a>
       <a href="#accounts">Net worth</a>
       <a href="#settings">Settings</a>
     </nav>
@@ -285,6 +286,27 @@
       </div>
     </section>
 
+    <section id="view-rules" class="view" hidden>
+      <div class="card">
+        <div class="card-head">
+          <h2>Rules</h2>
+          <span class="muted" id="rules-summary"></span>
+        </div>
+        <p class="muted hint">Everything you've told Penny: names, categories, combined merchants and subscription changes.
+           Each shows what it reaches, so a rule catching the wrong transactions stands out. Undo any of them from its <b>⋯</b> menu.</p>
+        <div class="filters">
+          <input id="rules-search" type="search" placeholder="Search rules">
+        </div>
+      </div>
+      <div class="card rules-check" id="rules-check" hidden>
+        <div class="card-head"><h2>Worth a look</h2></div>
+        <p class="muted hint">These rules reach transactions that look like different kinds of money, like transfers between your
+           accounts and payments from other people. That usually means two merchants ended up under one name.</p>
+        <div class="list" id="rules-check-rows"></div>
+      </div>
+      <div id="rules-groups"></div>
+    </section>
+
     <section id="view-settings" class="view" hidden>
       <div class="card" id="connect">
         <div class="card-head"><h2>Connect your bank</h2><span class="muted" id="connect-state"></span></div>
@@ -377,7 +399,7 @@
         <div id="imp-history" class="list"></div>
       </div>
 
-      <div class="card">
+      <div class="card" id="categories">
         <div class="card-head">
           <h2>Categories</h2>
           <span class="muted">Rename or delete any category. A few are part of Penny's totals, so their names stay.</span>
@@ -516,6 +538,10 @@
         <details><summary>Why doesn't paying my credit card count as spending?</summary>
           <p>The purchases on the card already counted when you made them, so counting the payment too would count them twice.
              Moving money between your own accounts (Transfers) and into investments isn't spending either.</p></details>
+        <details><summary>Why isn't money from Venmo counted as income?</summary>
+          <p>Money from Venmo, Zelle or Cash App is usually a friend paying you back, so Penny files it under Reimbursements, which counts as neither income nor spending.
+             To have it lower what you spent, give it the category of what it paid back (Dining for a shared dinner) from the transaction's <b>⋯</b> menu.
+             If it really is pay, move it to Income.</p></details>
         <details><summary>Is the net worth history exact?</summary>
           <p>From your first sync on, yes. Before that, Penny works it out backward from your transactions, and for brokerages
              and crypto wallets from the deposits it sees going into them, so older points are close estimates.</p></details>

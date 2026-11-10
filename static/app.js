@@ -72,7 +72,7 @@ function avatar(merchant, name, cls = "avatar") {
 
 // ---------- routing ----------
 
-const VIEWS = ["dashboard", "review", "subscriptions", "transactions", "merchants", "accounts", "settings"];
+const VIEWS = ["dashboard", "review", "subscriptions", "transactions", "merchants", "rules", "accounts", "settings"];
 
 // "#settings/connect" shows Settings and scrolls to the element with id "connect".
 async function route() {
@@ -85,7 +85,7 @@ async function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
   const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), status.remote ? null : loadData(),
-                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: () => { keepVisible.clear(); return loadTransactions(); }, merchants: loadMerchants, accounts: loadAccounts };
+                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: () => { keepVisible.clear(); return loadTransactions(); }, merchants: loadMerchants, rules: loadRules, accounts: loadAccounts };
   await Promise.all([loaders[view]?.(), hasData && loadGuide(view)]);
   if (view === "settings") showConnectState(anchor === "connect");
   if (anchor) document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -968,6 +968,173 @@ $("#tx-body").addEventListener("click", async (e) => {
     await api(`/api/transaction-category?id=${encodeURIComponent(reset.dataset.txReset)}`, { method: "DELETE" });
     loadTransactions();
   }
+});
+
+// ---------- rules ----------
+// Every rule in one place, each with what it reaches, so one catching the wrong
+// transactions (a name given to two different merchants) is easy to spot.
+
+let ruleData = null;
+
+async function loadRules() {
+  [ruleData] = await Promise.all([api("/api/rules"), refreshCategories()]);
+  renderRules();
+}
+
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+const catTag = (cat) => `<span class="rule-cat">${dot(cat)}${esc(cat)}</span>`;
+// "28 Transfers, 3 Reimbursements"
+const catMix = (cats) => cats.map((c) => `${c.count} ${esc(c.category)}`).join(", ");
+
+// What a merchant-wide rule reaches: how many, which categories, and some of the bank's wording.
+function reachMeta(r) {
+  const lines = [`<div class="meta">${plural(r.count, "transaction")}${r.categories.length
+    ? ` · now in ${catMix(r.categories)}` : ""}</div>`];
+  if (r.mixed) lines.push(`<div class="meta">Penny would file them as ${catMix(r.auto_categories)} on its own</div>`);
+  if (r.examples?.length) {
+    const more = r.descriptions > r.examples.length ? ` and ${plural(r.descriptions - r.examples.length, "other description")}` : "";
+    lines.push(`<div class="meta example">${r.examples.map(esc).join(" · ")}${more}</div>`);
+  }
+  return lines.join("");
+}
+
+function ruleRow({ title, meta = "", search, menu, mixed = false }) {
+  return `<div class="item rule-row" data-rule-search="${esc(search.toLowerCase())}">
+    <div class="main"><div class="title">${title}${mixed ? '<span class="badge">Mixed</span>' : ""}</div>${meta}</div>
+    ${menu}
+  </div>`;
+}
+
+function renderRules() {
+  const d = ruleData;
+  const showTx = (r) => menuItem("Show its transactions", `data-show-merchant="${esc(r.name)}"`);
+  const nameRow = (r) => ruleRow({
+    title: `${esc(r.bank_name)} <span class="muted">shown as</span> ${esc(r.rule_name)}`,
+    meta: reachMeta(r), mixed: r.mixed, search: `${r.bank_name} ${r.rule_name} ${r.examples.join(" ")}`,
+    menu: moreMenu(`Options for the name ${r.rule_name}`, [
+      showTx(r), menuItem(`Go back to “${r.bank_name}”`, `data-rule-undo="name" data-merchant="${esc(r.merchant)}"`, true)]),
+  });
+  const categoryRow = (r) => ruleRow({
+    title: `${esc(r.name)} ${catTag(r.rule_category)}`,
+    meta: reachMeta(r), mixed: r.mixed, search: `${r.name} ${r.rule_category} ${r.examples.join(" ")}`,
+    menu: moreMenu(`Options for ${r.name}'s rule`, [
+      showTx(r), menuItem("Remove rule", `data-rule-undo="category" data-merchant="${esc(r.merchant)}"`, true)]),
+  });
+  const combinedRow = (r) => ruleRow({
+    title: `${esc(r.alias_name)} <span class="muted">counted as</span> ${esc(r.into_name)}`,
+    meta: `<div class="meta">${plural(r.count, "transaction")} from ${esc(r.alias_name)}</div>`,
+    mixed: r.mixed, search: `${r.alias_name} ${r.into_name}`,
+    menu: moreMenu(`Options for ${r.alias_name}`, [
+      menuItem(`Show all from ${r.into_name}`, `data-show-merchant="${esc(r.into_name)}"`),
+      menuItem(`Separate ${r.alias_name}`, `data-rule-undo="combine" data-alias="${esc(r.alias)}"`, true)]),
+  });
+
+  const sub = d.subscriptions;
+  const groups = [
+    { title: "Merchant names", hint: "Your names for merchants. One name covers everything Penny groups under that merchant.",
+      rows: d.names.map(nameRow) },
+    { title: "Merchant categories", hint: "Every transaction from the merchant goes in this category, unless a description rule or a single change says otherwise.",
+      rows: d.merchant_categories.map(categoryRow) },
+    { title: "Description rules", hint: "A merchant's transactions whose description contains these words.",
+      rows: d.description_categories.map((r) => ruleRow({
+        title: `${esc(r.name)}: <span class="rule-pattern">${esc(r.pattern)}</span> ${catTag(r.rule_category)}`,
+        meta: `<div class="meta">${plural(r.count, "transaction")}</div>`,
+        search: `${r.name} ${r.pattern} ${r.rule_category}`,
+        menu: moreMenu(`Options for ${r.name}: ${r.pattern}`, [
+          showTx(r), menuItem("Remove rule", `data-rule-undo="description" data-merchant="${esc(r.merchant)}" data-pattern="${esc(r.pattern)}"`, true)]),
+      })) },
+    { title: "Combined merchants", hint: "Merchants you combined, counted as one.", rows: d.combined.map(combinedRow) },
+    { title: "Single transactions", hint: "Purchases you moved to another category on their own.",
+      rows: d.transaction_categories.map((t) => ruleRow({
+        title: `${esc(t.name)} ${catTag(t.category)}`,
+        meta: `<div class="meta">${dayLabel(t.date)} · ${money(t.amount)} · ${esc(t.account_name)} · otherwise ${esc(t.default_category)}</div>
+               <div class="meta example">${esc(t.description)}</div>`,
+        search: `${t.name} ${t.category} ${t.description}`,
+        menu: moreMenu(`Options for ${t.name} on ${dayLabel(t.date)}`, [
+          showTx(t), menuItem(`Back to ${t.default_category}`, `data-rule-undo="transaction" data-id="${esc(t.id)}"`, true)]),
+      })) },
+    { title: "Subscriptions", hint: "Changes you made on the Subscriptions page.",
+      rows: [
+        ...sub.hidden.map((s) => ruleRow({
+          title: `${esc(s.label)} <span class="muted">hidden</span>`, search: `${s.label} hidden`,
+          menu: moreMenu(`Options for ${s.label}`, [menuItem("Show it again", `data-rule-undo="hidden" data-key="${esc(s.key)}"`, true)]),
+        })),
+        ...sub.names.map((s) => ruleRow({
+          title: `${esc(s.label)} <span class="muted">named</span> ${esc(s.name)}`, search: `${s.label} ${s.name}`,
+          menu: moreMenu(`Options for ${s.name}`, [menuItem("Remove name", `data-rule-undo="recurring-name" data-key="${esc(s.key)}"`, true)]),
+        })),
+        ...sub.kinds.map((s) => ruleRow({
+          title: `${esc(s.label)} <span class="muted">counted as a</span> ${s.kind === "bill" ? "bill" : "subscription"}`,
+          search: `${s.label} ${s.kind}`, menu: moreMenu(`Options for ${s.label}`, [menuItem("Open Subscriptions", `data-rule-go="subscriptions"`)]),
+        })),
+        ...sub.added.map((s) => ruleRow({
+          title: `${esc(s.name)} <span class="muted">added by you</span>`, search: `${s.name} added`,
+          menu: moreMenu(`Options for ${s.name}`, [menuItem("Open Subscriptions", `data-rule-go="subscriptions"`)]),
+        })),
+      ] },
+    { title: "Renamed categories", hint: "Transactions Penny would file under the old name go in the new one.",
+      rows: d.category_renames.map((c) => ruleRow({
+        title: `${esc(c.old_name)} <span class="muted">is now</span> ${esc(c.new_name)}`, search: `${c.old_name} ${c.new_name}`,
+        menu: moreMenu(`Options for ${c.new_name}`, [menuItem("Open categories in Settings", `data-rule-go="settings/categories"`)]),
+      })) },
+  ];
+
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+  $("#rules-summary").textContent = plural(total, "rule");
+  // One row per merchant, even when several of its rules reach the same mix.
+  const seen = new Set();
+  const once = (r) => !seen.has(r.merchant) && seen.add(r.merchant);
+  const flagged = [...d.names.filter((r) => r.mixed && once(r)).map(nameRow),
+                   ...d.merchant_categories.filter((r) => r.mixed && once(r)).map(categoryRow),
+                   ...d.combined.filter((r) => r.mixed && once(r)).map(combinedRow)];
+  $("#rules-check").hidden = !flagged.length;
+  $("#rules-check-rows").innerHTML = flagged.join("");
+  $("#rules-groups").innerHTML = groups.filter((g) => g.rows.length).map((g) => `
+    <div class="card rules-group">
+      <div class="card-head"><h2>${g.title}</h2><span class="muted" data-rules-count>${plural(g.rows.length, "rule")}</span></div>
+      <p class="muted hint">${g.hint}</p>
+      <div class="list">${g.rows.join("")}</div>
+      <div class="empty" data-rules-none hidden>None match your search.</div>
+    </div>`).join("") || `<div class="card"><div class="empty">You haven't made any rules yet.</div></div>`;
+  filterRules();
+}
+
+function filterRules() {
+  const q = $("#rules-search").value.trim().toLowerCase();
+  for (const card of document.querySelectorAll("#rules-groups .rules-group, #rules-check")) {
+    const rows = [...card.querySelectorAll(".rule-row")];
+    rows.forEach((r) => (r.hidden = !!q && !r.dataset.ruleSearch.includes(q)));
+    const shown = rows.filter((r) => !r.hidden).length;
+    const none = card.querySelector("[data-rules-none]");
+    if (none) none.hidden = shown > 0;
+    const count = card.querySelector("[data-rules-count]");
+    if (count) count.textContent = q ? `${shown} of ${plural(rows.length, "rule")}` : plural(rows.length, "rule");
+  }
+}
+$("#rules-search").oninput = filterRules;
+
+$("#view-rules").addEventListener("click", async (e) => {
+  const go = e.target.closest("[data-rule-go]");
+  if (go) { location.hash = `#${go.dataset.ruleGo}`; return; }
+  const btn = e.target.closest("[data-rule-undo]");
+  if (!btn) return;
+  const { merchant, pattern, alias, id, key } = btn.dataset;
+  const q = (params) => new URLSearchParams(params).toString();
+  const undo = {
+    name: () => api("/api/merchants/name", { method: "PUT", body: { merchant, name: "" } }),
+    category: () => api(`/api/merchant-rules?${q({ merchant })}`, { method: "DELETE" }),
+    description: () => api(`/api/description-rules?${q({ merchant, pattern })}`, { method: "DELETE" }),
+    combine: () => api(`/api/merchants/combine?${q({ alias })}`, { method: "DELETE" }),
+    transaction: () => api(`/api/transaction-category?${q({ id })}`, { method: "DELETE" }),
+    hidden: () => api("/api/subscriptions/override", { method: "POST", body: { merchant: key, status: null } }),
+    "recurring-name": () => api("/api/subscriptions/name", { method: "PUT", body: { key, name: "" } }),
+  }[btn.dataset.ruleUndo];
+  try {
+    await undo();
+  } catch (err) {
+    alert(err.message);
+  }
+  loadRules();
 });
 
 // ---------- merchants ----------

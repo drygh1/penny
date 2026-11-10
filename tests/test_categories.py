@@ -24,9 +24,8 @@ def test_every_category_has_its_own_color(client):
 
 def test_add_category_takes_free_color_after_delete(client):
     assert client.post("/api/categories", json={"name": "Kids"}).status_code == 200
-    assert cats(client)["Kids"]["color_slot"] == 18  # the 17 starting categories use 1-17
-    for name in ("Pets", "Gifts"):  # slots 19-20
-        client.post("/api/categories", json={"name": name})
+    assert cats(client)["Kids"]["color_slot"] == 19  # the 18 starting categories use 1-18
+    client.post("/api/categories", json={"name": "Pets"})  # slot 20
     client.post("/api/categories", json={"name": "Garden"})
     assert cats(client)["Garden"]["color_slot"] is None  # all 20 colors in use
 

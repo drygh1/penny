@@ -122,7 +122,7 @@ def recategorize_all(conn) -> int:
 TRANSFER_WINDOW_DAYS = 4
 # Only transactions Penny couldn't otherwise place are paired, so a $20 dinner
 # never pairs with a $20 payment from a friend.
-_PAIRABLE = {"Other", "Income", "Transfers", "Credit Card Payments"}
+_PAIRABLE = {"Other", "Income", "Reimbursements", "Transfers", "Credit Card Payments"}
 
 
 def match_transfers(conn) -> int:
@@ -256,10 +256,28 @@ def card_money_in(conn) -> int:
     return len(updates)
 
 
+# Merchant keys that older versions of Penny gave to more than one merchant.
+# Their transactions get their key worked out again, once per start.
+_SHARED_KEYS = ("transfer from", "transfer to")
+
+
+def rekey_shared_merchants(conn) -> int:
+    """Split merchants like "transfer from", which once held both "Transfer from
+    Venmo" and "Transfer from Account 10", into the merchants they really are."""
+    rows = conn.execute(f"SELECT id, description, payee, merchant FROM transactions "
+                        f"WHERE merchant IN ({','.join('?' * len(_SHARED_KEYS))})", _SHARED_KEYS).fetchall()
+    updates = [(new, r["id"]) for r in rows
+               if (new := normalize_merchant(r["description"], r["payee"])) != r["merchant"]]
+    with conn:
+        conn.executemany("UPDATE transactions SET merchant = ? WHERE id = ?", updates)
+    return len(updates)
+
+
 def refresh_categories(conn):
-    """Fix purchase dates, drop overlapping imports, re-run keyword categories,
-    then pair transfers between accounts."""
+    """Fix purchase dates and shared merchant keys, drop overlapping imports,
+    re-run keyword categories, then pair transfers between accounts."""
     fix_purchase_dates(conn)
+    rekey_shared_merchants(conn)
     with conn, keeping_marks(conn):
         for (account_id,) in conn.execute("SELECT id FROM accounts").fetchall():
             importer.drop_overlap(conn, account_id)

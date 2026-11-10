@@ -11,6 +11,7 @@ import re
 # live list is the `categories` table (see db.py).
 DEFAULT_CATEGORIES = [
     "Income",
+    "Reimbursements",
     "Transfers",
     "Credit Card Payments",
     "Investments",
@@ -30,16 +31,19 @@ DEFAULT_CATEGORIES = [
 ]
 # Defaults added after the first release, for databases seeded before them:
 # name -> the category it goes just before.
-LATER_DEFAULT_CATEGORIES = {"Cash": "Fees", "Investments": "Housing", "Credit Card Payments": "Investments"}
+LATER_DEFAULT_CATEGORIES = {"Cash": "Fees", "Investments": "Housing", "Credit Card Payments": "Investments",
+                            "Reimbursements": "Transfers"}
 
 # Categories that aren't spending: money coming in, money moving between your
-# own accounts, paying off a card (the purchases on it already counted), and
-# money put into investments (it's still yours, so it counts toward what you saved).
-NON_SPENDING = {"Transfers", "Credit Card Payments", "Income", "Investments"}
+# own accounts, paying off a card (the purchases on it already counted), money
+# put into investments (it's still yours, so it counts toward what you saved),
+# and friends paying you back (counted as neither until you give it the
+# purchase's category, which then lowers that spending).
+NON_SPENDING = {"Transfers", "Credit Card Payments", "Income", "Investments", "Reimbursements"}
 
-# Spending math depends on Income and Transfers, and Other is the fallback,
-# so these three can't be deleted.
-LOCKED_CATEGORIES = {"Income", "Transfers", "Other"}
+# Spending math depends on Income, Reimbursements and Transfers, and Other is
+# the fallback, so these can't be deleted.
+LOCKED_CATEGORIES = {"Income", "Reimbursements", "Transfers", "Other"}
 # Penny's math looks these up by name, so they can't be renamed.
 FIXED_NAMES = LOCKED_CATEGORIES | NON_SPENDING
 
@@ -51,7 +55,7 @@ DEFAULT_COLOR_SLOTS = {
     "Housing": 1, "Dining": 2, "Groceries": 3, "Transportation": 4, "Shopping": 5,
     "Utilities & Bills": 6, "Subscriptions": 7, "Entertainment": 8,
     "Income": 9, "Transfers": 10, "Health": 11, "Travel": 12, "Fees": 13, "Other": 14, "Cash": 15,
-    "Investments": 16, "Credit Card Payments": 17,
+    "Investments": 16, "Credit Card Payments": 17, "Reimbursements": 18,
 }
 
 # Checked in order against the lowercased raw description; first match wins.
@@ -60,7 +64,7 @@ KEYWORDS = [
     ("Credit Card Payments", ["payment thank you", "thank you", "payment - thank", "card payment",
                               "credit card pmt", "crcardpmt", "cardmember serv"]),
     ("Transfers", ["transfer", "autopay", "autopymt", "internet payment", "online payment",
-                   "epay", "to savings", "from savings", "venmo cashout",
+                   "epay", "to savings", "from savings",
                    "contribution", "electronic payment", "mobile payment", "payment - thank",
                    "to share", "from share",  # credit unions call accounts "shares"
                    "online pmt", "e-payment",
@@ -166,6 +170,7 @@ _NOISE_WORDS = {
 }
 
 
+_OWN_ACCOUNT_WORDS = {"account", "acct", "share", "savings", "checking", "loan", "my"}
 _ACH_COMPANY = re.compile(r"\bco:\s*(.+?)\s*(?:ach trace|name:|data:|type:|$)")
 _OWN_TRANSFER = re.compile(r"^(?:withdrawal |deposit )?(?:home banking )?(to|from) share\b")
 _BANK_PREFIX = re.compile(r"^(?:withdrawal|deposit)\b\s*(?:home banking\b)?")
@@ -193,6 +198,10 @@ def normalize_merchant(description: str, payee: str | None = None) -> str:
     s = re.sub(r"\.(com|net|org|io)\b", " ", s)
     s = re.sub(r"[^a-z&' ]+", " ", s)  # drop digits, punctuation, store numbers
     words = [w for w in s.split() if len(w) > 1 and w not in _NOISE_WORDS]
+    # "Transfer from Venmo" is Venmo; "Transfer from Account 10" stays a transfer
+    # between your own accounts. Otherwise both would be "transfer from".
+    if len(words) > 2 and words[0] == "transfer" and words[1] in ("from", "to") and words[2] not in _OWN_ACCOUNT_WORDS:
+        words = words[2:]
     # Trailing two-letter word is almost always a US state code.
     if len(words) > 1 and len(words[-1]) == 2:
         words = words[:-1]
@@ -210,10 +219,16 @@ def display_name(merchant: str) -> str:
     return " ".join(w.capitalize() for w in merchant.split())
 
 
+# Money from a payment app is usually a friend paying you back, not pay.
+_PEER_APP = re.compile(r"(?<![a-z])(venmo|zelle|cash app|square cash)")
+
+
 def categorize(description: str, amount: float) -> str:
     text = description.lower()
     if _is_card_payment(text, amount):
         return "Credit Card Payments"
+    if amount > 0 and _PEER_APP.search(text):
+        return "Reimbursements"
     for category, pattern in _PATTERNS:
         if pattern.search(text):
             # A positive amount at a store (a refund) keeps the store's

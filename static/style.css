@@ -252,6 +252,12 @@ main { max-width: 1160px; margin: 0 auto; padding: 28px 32px 48px; display: grid
   border-radius: 999px; background: var(--accent-soft); color: var(--text); vertical-align: 1px;
 }
 .merchants { margin-top: 12px; }
+/* Rules page */
+#rules-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.rule-row .title { white-space: normal; }
+.rule-row .example { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-cat { display: inline-flex; align-items: center; margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.rules-check { border: 1px solid var(--warning-ink); }
 .merchant-row { align-items: center; }
 .merchant-row .example { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-controls { display: grid; justify-items: end; gap: 2px; }

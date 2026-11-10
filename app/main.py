@@ -1209,6 +1209,96 @@ def split_merchant(alias: str, conn=Depends(get_conn)):
     return {"ok": True}
 
 
+# ---------- rules ----------
+
+# Kinds of money that aren't purchases. A merchant with two of these among its
+# own transactions is probably two merchants sharing one name.
+_NOT_PURCHASES = NON_SPENDING
+
+
+@app.get("/api/rules")
+def rules(conn=Depends(get_conn)):
+    """Every rule you've made, in one place, with what each one reaches."""
+    name = merchant_namer(conn)
+    # What each merchant's transactions look like, to show what a rule reaches.
+    reach: dict[str, dict] = {}
+    for t in conn.execute(f"SELECT * FROM ({TX_SELECT}) ORDER BY posted DESC"):
+        m = reach.setdefault(t["merchant"], {"count": 0, "categories": {}, "auto": {}, "examples": {}})
+        m["count"] += 1
+        m["categories"][t["category"]] = m["categories"].get(t["category"], 0) + 1
+        key = description_key(t["description"])
+        m["examples"].setdefault(key, t["description"])
+    for r in conn.execute("SELECT COALESCE(ma.merchant, t.merchant) AS merchant, t.category, COUNT(*) AS n "
+                          "FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant GROUP BY 1, 2"):
+        if r["merchant"] in reach:
+            reach[r["merchant"]]["auto"][r["category"]] = r["n"]
+
+    def about(merchant):
+        m = reach.get(merchant, {"count": 0, "categories": {}, "auto": {}, "examples": {}})
+        auto = m["auto"]
+        # Purchases and pay from one merchant is normal (an employer that also bills
+        # you). Two kinds of money that aren't purchases, like Transfers and
+        # Reimbursements, usually means two merchants got grouped as one.
+        mixed = len([c for c in auto if c in _NOT_PURCHASES]) > 1
+        return {
+            "merchant": merchant, "name": name(merchant), "bank_name": display_name(merchant),
+            "count": m["count"],
+            "categories": sorted(({"category": c, "count": n} for c, n in m["categories"].items()),
+                                 key=lambda c: -c["count"]),
+            "auto_categories": sorted(({"category": c, "count": n} for c, n in auto.items()), key=lambda c: -c["count"]),
+            "descriptions": len(m["examples"]),
+            "examples": list(m["examples"].values())[:3],
+            "mixed": mixed,
+        }
+
+    def recurring_label(key):
+        # Keys are a merchant, or "merchant|amount" when one merchant bills for several things.
+        merchant, _, amount = key.partition("|")
+        try:
+            amount = f"${float(amount):,.2f}" if amount else ""
+        except ValueError:
+            pass
+        return name(merchant) + (f" ({amount})" if amount else "")
+
+    def pattern_count(merchant, pattern):
+        return conn.execute(f"SELECT COUNT(*) FROM ({TX_SELECT}) WHERE merchant = ? AND description_rule = ?",
+                            (merchant, pattern)).fetchone()[0]
+
+    one_offs = conn.execute(f"""
+        SELECT id, posted, amount, description, merchant, category, default_category, account_name
+        FROM ({TX_SELECT}) WHERE edited ORDER BY posted DESC""").fetchall()
+    manual = conn.execute("SELECT id, name FROM manual_recurring ORDER BY name").fetchall()
+    return {
+        "names": [about(r["merchant"]) | {"rule_name": r["name"]}
+                  for r in conn.execute("SELECT merchant, name FROM merchant_names ORDER BY name COLLATE NOCASE")],
+        "merchant_categories": sorted((about(r["merchant"]) | {"rule_category": r["category"]}
+                                       for r in conn.execute("SELECT merchant, category FROM merchant_rules")),
+                                      key=lambda r: r["name"].lower()),
+        "description_categories": [
+            {"merchant": r["merchant"], "name": name(r["merchant"]), "pattern": r["pattern"],
+             "rule_category": r["category"], "count": pattern_count(r["merchant"], r["pattern"])}
+            for r in conn.execute("SELECT merchant, pattern, category FROM description_rules ORDER BY merchant, pattern")],
+        "combined": [about(r["merchant"]) | {"alias": r["alias"], "alias_name": display_name(r["alias"]),
+                                          "into": r["merchant"], "into_name": name(r["merchant"]),
+                                          "count": conn.execute("SELECT COUNT(*) FROM transactions WHERE merchant = ?",
+                                                                (r["alias"],)).fetchone()[0]}
+                     for r in conn.execute("SELECT alias, merchant FROM merchant_aliases ORDER BY merchant, alias")],
+        "transaction_categories": [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(), "name": name(r["merchant"])}
+                                   for r in one_offs],
+        "subscriptions": {
+            "hidden": [dict(r) | {"label": recurring_label(r["key"])} for r in conn.execute(
+                "SELECT merchant AS key, status FROM subscription_overrides ORDER BY merchant")],
+            "names": [dict(r) | {"label": recurring_label(r["key"])} for r in conn.execute(
+                "SELECT key, name FROM recurring_names ORDER BY name COLLATE NOCASE")],
+            "kinds": [dict(r) | {"label": recurring_label(r["key"])} for r in conn.execute(
+                "SELECT key, kind FROM recurring_kinds ORDER BY key")],
+            "added": [dict(r) for r in manual],
+        },
+        "category_renames": [dict(r) for r in conn.execute(
+            "SELECT old_name, new_name FROM category_aliases ORDER BY old_name")],
+    }
+
+
 @app.get("/api/merchant-logos")
 def merchant_logos(conn=Depends(get_conn)):
     """Map of merchant -> logo version, so the UI knows which merchants have a picture."""

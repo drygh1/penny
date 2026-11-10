@@ -158,6 +158,12 @@ The **Merchants** page lists everyone you've paid. The category menu is in each 
 
 Changing a category on the **Transactions** or **Review** page changes just that purchase, for a merchant that's usually one thing but sometimes another. An edited purchase keeps its category through syncs and rule changes. On Transactions, its **⋯** menu then has **Make a rule**, which applies its category to everything from the merchant or only to descriptions containing the words you choose, and **Reset**, which sends it back to the merchant's default. On Review, it's in the row's **⋯** menu too. If a description rule set the purchase's category, that rule is the one offered first. The row stays on screen after you change it, even if it no longer matches your filters, until you leave the page or change the filters.
 
+## All your rules in one place
+
+The **Rules** page lists everything you've told Penny: merchant names, merchant categories, description rules, combined merchants, single-purchase changes, subscription changes and renamed categories. Each one shows what it reaches: how many transactions, which categories they're in now, and some of the bank's wording behind them. Undo any of them from its **⋯** menu, or search to find one.
+
+**Worth a look** at the top lists rules whose transactions look like two kinds of money that aren't purchases, like transfers between your accounts and payments from friends. That usually means two merchants ended up under one name, so a name or rule meant for one reaches the other too.
+
 ## Subscriptions and bills
 
 A merchant counts as recurring when it charges on a regular schedule (weekly to yearly) for a steady amount, after 2 to 3 charges. When one merchant bills for several things (an app store billing for several apps), its charges are grouped by price and each group is checked on its own.
@@ -172,10 +178,11 @@ Transactions are dated the day you made the purchase, not the day the bank poste
 
 Add, rename or delete categories under **Settings → Categories**.
 
-- Renaming a category keeps its transactions, rules and color, and transactions Penny would have filed under the old name land in the new one. Income, Transfers, Other, Credit Card Payments and Investments are part of Penny's totals, so their names can't change.
+- Renaming a category keeps its transactions, rules and color, and transactions Penny would have filed under the old name land in the new one. Income, Reimbursements, Transfers, Other, Credit Card Payments and Investments are part of Penny's totals, so their names can't change.
 
 - When you delete a category, you choose where its transactions go. Merchant rules pointing to it move too. Future transactions that would have landed in it go to the new category.
-- Income, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Transfers, Credit Card Payments and Investments. Paying off a card isn't spending, because the purchases on it already counted. Money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved. Other catches anything unmatched.
+- Income, Reimbursements, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Reimbursements, Transfers, Credit Card Payments and Investments.
+- **Money from Venmo, Zelle or Cash App is a Reimbursement, not income.** It's usually a friend paying you back, so it counts as neither income nor spending. Give it the category of what it paid back (Dining for a shared dinner) and it lowers that spending instead. If it really is pay, move it to Income. Paying off a card isn't spending, because the purchases on it already counted. Money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved. Other catches anything unmatched.
 - **Credit Card Payments** are recognized from a card issuer's name plus a payment word in checking ("CAPITAL ONE ... ONLINE PMT", "CITI CARD E-PAYMENT"), payment wording on the card itself, and matching amounts moving between your accounts.
 - **Money arriving on a credit card is never income.** On an account that owes money, anything mentioning a payment (like a pending "PENDING PAYMENT" or "ONLINE/MOBILE RECURRING") is a Credit Card Payment, and anything else is a refund that takes the category the merchant's purchases usually have.
 - Every category gets its own color, from 20 colors ordered so neighbors stay distinct for colorblind readers too. Deleting a category frees its color for the next one you add; only past 20 categories does one show in gray.
