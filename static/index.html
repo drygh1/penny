@@ -18,6 +18,7 @@
     <div class="brand"><span class="brand-mark" aria-hidden="true">P</span>Penny</div>
     <nav id="nav">
       <a href="#dashboard">Dashboard</a>
+      <a href="#budget">Budget</a>
       <a href="#review">Review <span class="nav-count" id="review-count" hidden></span></a>
       <a href="#subscriptions">Subscriptions</a>
       <a href="#transactions">Transactions</a>
@@ -160,6 +161,36 @@
           <div id="dash-review-list" class="list"></div>
           <a class="btn" href="#review">Review them</a>
         </div>
+      </div>
+    </section>
+
+    <section id="view-budget" class="view" hidden>
+      <div class="tip" data-tip="budget" hidden><span class="tip-label">Tip</span><p>Set how much you plan to spend in each category. An amount you set carries on to every month after it until you change it, so you only set it once. To change one month alone, like a December with gifts, tick <b>Only this month</b>.</p><button class="link-btn" data-tip-dismiss="budget">Got it</button></div>
+      <div class="period-bar">
+        <div>
+          <h1 id="budget-title"></h1>
+          <p class="hero" id="budget-hero"></p>
+        </div>
+        <div class="period-controls">
+          <button class="btn secondary small" id="budget-prev" aria-label="Previous month">‹</button>
+          <select id="budget-month" aria-label="Month"></select>
+          <button class="btn secondary small" id="budget-next" aria-label="Next month">›</button>
+        </div>
+      </div>
+
+      <div class="tiles">
+        <div class="tile"><div class="label">Budgeted</div><div class="value" id="bg-budgeted"></div><div class="sub" id="bg-budgeted-sub"></div></div>
+        <div class="tile"><div class="label">Spent</div><div class="value" id="bg-spent"></div><div class="sub" id="bg-spent-sub"></div></div>
+        <div class="tile"><div class="label" id="bg-left-label">Left</div><div class="value" id="bg-left"></div><div class="sub" id="bg-left-sub"></div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Budgets</h2><span class="muted" id="budget-sub"></span></div>
+        <div id="budget-rows" class="list"></div>
+      </div>
+      <div class="card" id="budget-unset-card">
+        <div class="card-head"><h2>No budget yet</h2><span class="muted" id="budget-unset-sub"></span></div>
+        <div id="budget-unset" class="list"></div>
       </div>
     </section>
 
@@ -617,6 +648,24 @@
       <div class="row dialog-actions">
         <button class="btn secondary" type="button" id="rule-cancel">Cancel</button>
         <button class="btn">Make rule</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="budget-dialog">
+    <form id="budget-form" method="dialog">
+      <h2 id="budget-dialog-title"></h2>
+      <p id="budget-dialog-text"></p>
+      <div class="form-grid">
+        <label class="wide">Amount per month<input id="budget-amount" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0" required></label>
+      </div>
+      <div class="budget-quick row" id="budget-quick"></div>
+      <label class="rule-choice"><input type="checkbox" id="budget-only"><span id="budget-only-label"></span></label>
+      <p id="budget-msg" class="msg"></p>
+      <div class="row dialog-actions">
+        <button class="btn secondary" type="button" id="budget-remove">Remove budget</button>
+        <span class="spacer"></span>
+        <button class="btn secondary" type="button" id="budget-cancel">Cancel</button>
+        <button class="btn">Save</button>
       </div>
     </form>
   </dialog>

@@ -4,6 +4,7 @@ A personal finance tracker that runs on your own computer. It tracks:
 
 - **Subscriptions and bills.** Penny finds recurring charges automatically and shows each one's monthly and yearly cost, the next charge date, price increases, and subscriptions that stopped charging. Bills you can't cancel (rent, utilities) are listed apart from subscriptions.
 - **Spending and income.** Charts by month or year, where your money went by category, where it came from by source, and your top merchants.
+- **Budget.** A monthly amount for each spending category, with how much of it you've spent and how much is left.
 - **Net worth.** Every account balance, split into assets and debts, plus a history chart.
 
 Bank data comes from [SimpleFIN Bridge](https://bridge.simplefin.org), which costs about $15 a year.
@@ -191,6 +192,18 @@ Add, rename or delete categories under **Settings → Categories**.
 - **Money arriving on a credit card is never income.** On an account that owes money, anything mentioning a payment (like a pending "PENDING PAYMENT" or "ONLINE/MOBILE RECURRING") is a Credit Card Payment, and anything else is a refund that takes the category the merchant's purchases usually have.
 - Every category gets its own color, from 20 colors ordered so neighbors stay distinct for colorblind readers too. Deleting a category frees its color for the next one you add; only past 20 categories does one show in gray.
 - A new category starts empty. Use the **Merchants** page to assign merchants to it.
+
+## Budget
+
+The **Budget** page sets how much you plan to spend in each category per month and shows how each one is going.
+
+- Click **Set budget** next to a category. Penny suggests your average from the last 3 months to start from.
+- An amount carries on to every month after it until you change it, so you set it once. Changing it in a later month changes it from that month on and leaves earlier months as they were.
+- To change one month alone, like a December with gifts, tick **Only this month**. The month after goes back to the amount before.
+- Use **‹ ›** or the month menu to look back at past months or plan ahead.
+- Each bar shows what you've spent of the budget. Refunds lower it, like everywhere else in Penny. A bar turns red once you go over. In the current month, a thin line marks where you'd be if you spent evenly through the month, and **ahead of pace** means you're past it. Bills like rent get no pace line, because they're paid all at once.
+- Click a category's name to see the transactions behind it.
+- Income, Transfers, Credit Card Payments, Investments and Reimbursements aren't spending, so they don't get a budget. Renaming a category keeps its budget; deleting one removes it.
 
 ## Toward an iPhone app
 

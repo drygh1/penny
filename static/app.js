@@ -72,7 +72,7 @@ function avatar(merchant, name, cls = "avatar") {
 
 // ---------- routing ----------
 
-const VIEWS = ["dashboard", "review", "subscriptions", "transactions", "merchants", "rules", "accounts", "settings"];
+const VIEWS = ["dashboard", "budget", "review", "subscriptions", "transactions", "merchants", "rules", "accounts", "settings"];
 
 // "#settings/connect" shows Settings and scrolls to the element with id "connect".
 async function route() {
@@ -85,7 +85,7 @@ async function route() {
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.hash === `#${view}`));
 
   const loaders = { settings: () => Promise.all([loadCategories(), loadImport(), status.remote ? null : loadData(),
-                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: () => { keepVisible.clear(); return loadTransactions(); }, merchants: loadMerchants, rules: loadRules, accounts: loadAccounts };
+                                                 status.remote ? null : loadUpdatesCard(), loadShareCard()]), dashboard: loadDashboard, budget: loadBudget, review: () => { keepVisible.clear(); return loadReview(); }, subscriptions: loadSubscriptions, transactions: () => { keepVisible.clear(); return loadTransactions(); }, merchants: loadMerchants, rules: loadRules, accounts: loadAccounts };
   await Promise.all([loaders[view]?.(), hasData && loadGuide(view)]);
   if (view === "settings") showConnectState(anchor === "connect");
   if (anchor) document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -490,6 +490,155 @@ $("#category-bars").addEventListener("click", (e) => {
   txFilters = { month: row.dataset.month, category: row.dataset.category, q: "" };
   location.hash = "transactions";
 });
+
+// ---------- budget ----------
+// A monthly amount per spending category. An amount set for a month carries on
+// to later months until changed, unless it was set for only that month.
+
+let budgetMonth = thisMonth();
+let budgetData = null;
+let budgetEditing = null;  // the category row being edited
+
+const monthsLeftWord = (n) => `${n} ${n === 1 ? "day" : "days"} left`;
+
+function budgetMonthOptions() {
+  // A year back from the earliest of (this month, the month shown), and a year ahead to plan.
+  const now = thisMonth();
+  const start = shiftMonth(budgetMonth < now ? budgetMonth : now, -12);
+  const end = shiftMonth(budgetMonth > now ? budgetMonth : now, 12);
+  const out = [];
+  for (let m = end; m >= start; m = shiftMonth(m, -1)) out.push(m);
+  return out;
+}
+
+function shiftMonth(ym, n) {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+async function loadBudget() {
+  const b = budgetData = await api(`/api/budget?month=${budgetMonth}`);
+  const now = thisMonth();
+  const current = b.month === now, future = b.month > now;
+  $("#budget-month").innerHTML = budgetMonthOptions().map((m) =>
+    `<option value="${m}"${m === b.month ? " selected" : ""}>${monthLabel(m, "long")}</option>`).join("");
+
+  // How far through the month we are, for the "on pace" marker.
+  const [y, mo] = b.month.split("-").map(Number);
+  const days = new Date(y, mo, 0).getDate();
+  const daysLeft = current ? days - new Date().getDate() + 1 : 0;
+  const elapsed = current ? (new Date().getDate() - 0.5) / days : future ? 0 : 1;
+
+  $("#budget-title").textContent = `${monthLabel(b.month, "long")} budget`;
+  $("#bg-budgeted").textContent = fmt0.format(b.budgeted);
+  $("#bg-budgeted-sub").textContent = b.income > 0 ? `${Math.round((b.budgeted / b.income) * 100)}% of income this month` : "";
+  $("#bg-spent").textContent = fmt0.format(b.spent);
+  $("#bg-spent-sub").textContent = b.unbudgeted_spent > 0 ? `plus ${fmt0.format(b.unbudgeted_spent)} outside your budgets` : "";
+  const over = b.left < 0;
+  $("#bg-left-label").textContent = over ? "Over" : "Left";
+  $("#bg-left").textContent = fmt0.format(Math.abs(b.left));
+  $("#bg-left").className = "value" + (over ? " negative-text" : "");
+  $("#bg-left-sub").textContent = current ? monthsLeftWord(daysLeft) : future ? "Planned" : "";
+
+  const set = b.categories.filter((c) => c.budget !== null);
+  const unset = b.categories.filter((c) => c.budget === null);
+  const overCats = set.filter((c) => c.spent > c.budget);
+  $("#budget-hero").innerHTML = !set.length
+    ? "Set a monthly amount for a category below to start your budget."
+    : overCats.length
+      ? `<b>${overCats.length}</b> of ${set.length} ${set.length === 1 ? "category is" : "categories are"} over budget${current ? " so far" : ""}.`
+      : future ? `${fmt0.format(b.budgeted)} planned across ${set.length} ${set.length === 1 ? "category" : "categories"}.`
+      : `Every category is within budget${current ? " so far" : ""}.`;
+  $("#budget-sub").textContent = set.length ? "Click a category to see its transactions" : "";
+
+  const avgNote = (c) => c.average !== null && b.average_months
+    ? `${fmt0.format(c.average)} a month on average (last ${b.average_months === 1 ? "month" : `${b.average_months} months`})` : "";
+  $("#budget-rows").innerHTML = set.length ? set.map((c) => {
+    const ratio = c.budget > 0 ? Math.max(c.spent, 0) / c.budget : 0;
+    const left = c.budget - c.spent;
+    const status = left < 0 ? `<span class="negative-text">${money(-left)} over</span>` : `${money(left)} left`;
+    const ahead = current && !c.bill && ratio > elapsed && left >= 0 ? ` · <span class="budget-ahead">ahead of pace</span>` : "";
+    const since = c.only_this_month ? "Only this month" : c.since === b.month ? "" : `Since ${monthLabel(c.since, "long")}`;
+    return `<div class="budget-row${left < 0 ? " over" : ""}" data-category="${esc(c.category)}">
+        <button type="button" class="budget-name link-btn" data-budget-tx="${esc(c.category)}" title="See transactions">${dot(c.category)}${esc(c.category)}</button>
+        <div class="budget-figures"><b>${money(c.spent)}</b> <span class="muted">of ${money(c.budget)}</span></div>
+        <button type="button" class="btn small secondary" data-budget-edit="${esc(c.category)}" aria-label="Change the ${esc(c.category)} budget">Edit</button>
+        <div class="budget-track" role="img" aria-label="${esc(c.category)}: ${money(c.spent)} spent of ${money(c.budget)}">
+          <div class="budget-fill" style="width:${Math.min(ratio, 1) * 100}%;background:${left < 0 ? "var(--critical)" : colorVar(c.category)}"></div>
+          ${current && !c.bill ? `<div class="budget-pace" style="left:${elapsed * 100}%" title="Where you'd be spending evenly"></div>` : ""}
+        </div>
+        <div class="budget-meta muted">${status}${ahead}${since ? ` · ${since}` : ""}${avgNote(c) ? ` · ${avgNote(c)}` : ""}</div>
+      </div>`;
+  }).join("") : `<div class="empty">No budgets yet. Pick a category under <b>No budget yet</b> to set one.</div>`;
+
+  $("#budget-unset-card").hidden = !unset.length;
+  $("#budget-unset-sub").textContent = "Spent this month, and the average to start from";
+  $("#budget-unset").innerHTML = unset.map((c) => `<div class="item">
+      <div class="main"><div class="title">${dot(c.category)}${esc(c.category)}</div>
+        <div class="meta">${money(c.spent)} spent${avgNote(c) ? ` · ${avgNote(c)}` : ""}</div></div>
+      <button type="button" class="btn small secondary" data-budget-edit="${esc(c.category)}">Set budget</button>
+    </div>`).join("");
+}
+
+function setBudgetMonth(m) {
+  budgetMonth = m;
+  loadBudget();
+}
+$("#budget-prev").onclick = () => setBudgetMonth(shiftMonth(budgetMonth, -1));
+$("#budget-next").onclick = () => setBudgetMonth(shiftMonth(budgetMonth, 1));
+$("#budget-month").onchange = (e) => setBudgetMonth(e.target.value);
+
+$("#view-budget").addEventListener("click", (e) => {
+  const tx = e.target.closest("[data-budget-tx]");
+  if (tx) {
+    txFilters = { month: budgetMonth, category: tx.dataset.budgetTx, q: "" };
+    location.hash = "transactions";
+    return;
+  }
+  const edit = e.target.closest("[data-budget-edit]");
+  if (edit) openBudget(edit.dataset.budgetEdit);
+});
+
+function openBudget(category) {
+  const c = budgetEditing = budgetData.categories.find((x) => x.category === category);
+  const month = monthLabel(budgetData.month, "long");
+  $("#budget-dialog-title").textContent = c.budget === null ? `Budget for ${category}` : `Change the ${category} budget`;
+  $("#budget-dialog-text").textContent = `${money(c.spent)} spent in ${month}.`;
+  $("#budget-amount").value = c.budget ?? (c.average ? Math.ceil(c.average / 10) * 10 : "");
+  const quick = [];
+  if (c.average) quick.push(["Average", Math.ceil(c.average / 10) * 10]);
+  if (c.spent > 0 && budgetData.month < thisMonth()) quick.push(["What you spent", Math.ceil(c.spent)]);
+  $("#budget-quick").innerHTML = quick.map(([label, v]) =>
+    `<button type="button" class="chip" data-budget-fill="${v}">${label}: ${fmt0.format(v)}</button>`).join("");
+  $("#budget-only").checked = c.only_this_month;
+  $("#budget-only-label").textContent = `Only ${month}. Later months keep ${c.budget === null || c.only_this_month ? "what they had" : "the amount they have now"}.`;
+  $("#budget-remove").hidden = c.budget === null;
+  $("#budget-msg").textContent = "";
+  $("#budget-dialog").showModal();
+  $("#budget-amount").select();
+}
+
+async function saveBudget(amount) {
+  try {
+    await api("/api/budget", { method: "PUT", body: {
+      category: budgetEditing.category, month: budgetData.month, amount, only_this_month: $("#budget-only").checked } });
+    $("#budget-dialog").close();
+    loadBudget();
+  } catch (err) {
+    $("#budget-msg").className = "msg error"; $("#budget-msg").textContent = err.message;
+  }
+}
+$("#budget-quick").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-budget-fill]");
+  if (b) $("#budget-amount").value = b.dataset.budgetFill;
+});
+$("#budget-cancel").onclick = () => $("#budget-dialog").close();
+$("#budget-remove").onclick = () => saveBudget(null);
+$("#budget-form").onsubmit = (e) => {
+  e.preventDefault();
+  saveBudget(+$("#budget-amount").value || null);
+};
 
 // ---------- review ----------
 // New transactions wait here until you check their category. ✓ confirms it;

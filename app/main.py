@@ -374,7 +374,7 @@ def load_demo(conn=Depends(get_conn)):
 # Steps tick themselves off from what you've done; visits count only once real
 # data is in, so poking around the demo doesn't check anything off.
 
-GUIDE_VIEWS = ("dashboard", "review", "subscriptions", "transactions", "merchants", "accounts")
+GUIDE_VIEWS = ("dashboard", "budget", "review", "subscriptions", "transactions", "merchants", "accounts")
 
 
 @app.get("/api/guide")
@@ -782,7 +782,7 @@ def rename_category(body: CategoryRenameBody, conn=Depends(get_conn)):
     with conn:
         conn.execute("UPDATE categories SET name = ? WHERE name = ?", (new, old))
         for table in ("transactions", "merchant_rules", "description_rules", "transaction_categories",
-                      "transaction_splits", "manual_recurring"):
+                      "transaction_splits", "manual_recurring", "budgets"):
             conn.execute(f"UPDATE {table} SET category = ? WHERE category = ?", (new, old))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (new, old))
         conn.execute(
@@ -813,6 +813,8 @@ def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
         conn.execute("UPDATE transaction_splits SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE description_rules SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE manual_recurring SET category = ? WHERE category = ?", (move_to, name))
+        # Its spending now adds to move_to's, which keeps its own budget.
+        conn.execute("DELETE FROM budgets WHERE category = ?", (name,))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (move_to, name))
         conn.execute(
             "INSERT INTO category_aliases (old_name, new_name) VALUES (?, ?) "
@@ -909,6 +911,123 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
         "income_sources": [dict(r) | {"name": name(r["merchant"]), "color_slot": income_slots.get(r["merchant"])}
                            for r in by_source],
     }
+
+
+# ---------- budget ----------
+
+BUDGET_AVERAGE_MONTHS = 3
+
+
+def month_shift(month: str, n: int) -> str:
+    y, m = map(int, month.split("-"))
+    y, m = divmod(y * 12 + m - 1 + n, 12)
+    return f"{y:04d}-{m + 1:02d}"
+
+
+def check_month(month: str) -> str:
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month or ""):
+        fail(Exception(f"Unknown month: {month}"))
+    return month
+
+
+def budget_amounts(conn, month: str) -> dict[str, dict]:
+    """Each category's budget for `month`: the newest amount set on or before it,
+    and the month it was set in. Categories without a budget are left out."""
+    rows = conn.execute("""
+        SELECT b.category, b.amount, b.month FROM budgets b
+        WHERE b.month = (SELECT MAX(month) FROM budgets WHERE category = b.category AND month <= ?)""",
+                        (month,)).fetchall()
+    return {r["category"]: {"amount": r["amount"], "since": r["month"]} for r in rows if r["amount"] is not None}
+
+
+@app.get("/api/budget")
+def budget(month: str | None = None, conn=Depends(get_conn)):
+    """Every spending category's budget for a month, next to what was spent in it
+    and what it averaged over the months before."""
+    month = check_month(month or date.today().strftime("%Y-%m"))
+    spent = dict(conn.execute(f"""SELECT category, ROUND(-SUM(amount), 2) FROM ({TX_SELECT})
+        WHERE month = ? AND {SPENDING_FILTER} GROUP BY category""", (month,)).fetchall())
+    first = month_shift(month, -BUDGET_AVERAGE_MONTHS)
+    # Average only over months Penny has transactions for, so a new user's
+    # average isn't pulled down by months before their history starts.
+    known = [r[0] for r in conn.execute(f"SELECT DISTINCT month FROM ({TX_SELECT}) WHERE month >= ? AND month < ?",
+                                        (first, month))]
+    past = dict(conn.execute(f"""SELECT category, -SUM(amount) FROM ({TX_SELECT})
+        WHERE month >= ? AND month < ? AND {SPENDING_FILTER} GROUP BY category""", (first, month)).fetchall())
+    amounts = budget_amounts(conn, month)
+    # A row for the next month means this month's amount doesn't carry on.
+    ends = {r[0] for r in conn.execute("SELECT category FROM budgets WHERE month = ?", (month_shift(month, 1),))}
+    bills = bill_categories(conn)
+    rows = []
+    for r in conn.execute("SELECT name, color_slot FROM categories ORDER BY position"):
+        if r["name"] in NON_SPENDING:
+            continue
+        b = amounts.get(r["name"])
+        rows.append({
+            "category": r["name"], "color_slot": r["color_slot"],
+            # Bills come all at once, so "ahead of pace" means nothing for them.
+            "bill": r["name"] in bills,
+            "budget": b["amount"] if b else None, "since": b["since"] if b else None,
+            "only_this_month": bool(b) and b["since"] == month and r["name"] in ends,
+            "spent": round(spent.get(r["name"], 0), 2),
+            "average": round(max(past.get(r["name"], 0), 0) / len(known), 2) if known else None,
+        })
+    budgeted = [c for c in rows if c["budget"] is not None]
+    total_budget = round(sum(c["budget"] for c in budgeted), 2)
+    total_spent = round(sum(c["spent"] for c in budgeted), 2)
+    income = conn.execute(f"SELECT COALESCE(SUM(amount), 0) FROM ({TX_SELECT}) WHERE month = ? AND category = 'Income'",
+                          (month,)).fetchone()[0]
+    return {
+        "month": month,
+        "categories": rows,
+        "budgeted": total_budget,
+        "spent": total_spent,
+        "left": round(total_budget - total_spent, 2),
+        "unbudgeted_spent": round(sum(c["spent"] for c in rows if c["budget"] is None), 2),
+        "income": round(income, 2),
+        "average_months": len(known),
+    }
+
+
+class BudgetBody(BaseModel):
+    category: str
+    month: str
+    amount: float | None  # None (or 0) removes the budget
+    only_this_month: bool = False
+
+
+@app.put("/api/budget")
+def set_budget(body: BudgetBody, conn=Depends(get_conn)):
+    """Set a category's budget from `month` on, replacing any later changes, or
+    for just that month, after which the amount it had before comes back."""
+    month = check_month(body.month)
+    if body.category not in db.category_names(conn):
+        fail(Exception(f"Unknown category: {body.category}"))
+    if body.category in NON_SPENDING:
+        fail(Exception(f"{body.category} isn't spending, so it can't have a budget."))
+    amount = round(body.amount, 2) if body.amount else None
+    if amount is not None and not 0 < amount < 10_000_000:
+        fail(Exception("Enter an amount above $0."))
+    nxt = month_shift(month, 1)
+    with conn:
+        if body.only_this_month:
+            after = budget_amounts(conn, nxt).get(body.category)
+            if not conn.execute("SELECT 1 FROM budgets WHERE category = ? AND month = ?", (body.category, nxt)).fetchone():
+                conn.execute("INSERT INTO budgets (category, month, amount) VALUES (?, ?, ?)",
+                             (body.category, nxt, after["amount"] if after else None))
+        else:
+            conn.execute("DELETE FROM budgets WHERE category = ? AND month > ?", (body.category, month))
+        conn.execute("INSERT INTO budgets (category, month, amount) VALUES (?, ?, ?) "
+                     "ON CONFLICT(category, month) DO UPDATE SET amount = excluded.amount",
+                     (body.category, month, amount))
+        # Tidy up: drop rows that only repeat the amount before them.
+        prev = None
+        for r in conn.execute("SELECT month, amount FROM budgets WHERE category = ? ORDER BY month",
+                              (body.category,)).fetchall():
+            if r["amount"] == prev:
+                conn.execute("DELETE FROM budgets WHERE category = ? AND month = ?", (body.category, r["month"]))
+            prev = r["amount"]
+    return {"ok": True}
 
 
 # ---------- transactions ----------

@@ -113,6 +113,16 @@ CREATE TABLE IF NOT EXISTS transaction_splits (
     PRIMARY KEY (tx_id, part)
 );
 
+-- How much you plan to spend in a category each month. An amount set for a
+-- month carries on to every later month until a later row changes it; a NULL
+-- amount means no budget from that month on.
+CREATE TABLE IF NOT EXISTS budgets (
+    category TEXT NOT NULL,
+    month    TEXT NOT NULL,  -- "2026-11"
+    amount   REAL,
+    PRIMARY KEY (category, month)
+);
+
 -- Transactions you've checked (or un-checked) on the Review page. Without a row
 -- here, anything posted before the review_since setting (30 days before Penny
 -- first had this) counts as checked, and anything newer doesn't.
