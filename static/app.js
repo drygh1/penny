@@ -643,6 +643,7 @@ function showReviewCount(n) {
 }
 
 async function loadReview() {
+  loadReimbursements();
   const r = await api(`/api/review?show=${reviewShow}`);
   if (reviewShow === "unchecked") r.items = await withKept(r.items, (a, b) => a.posted - b.posted);
   showReviewCount(r.remaining);
@@ -674,12 +675,13 @@ function reviewRow(t) {
       </div>
       <div class="amount ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</div>
       <div class="review-controls">
-        <label class="m-category">${dot(t.category)}<select data-review-cat="${id}" aria-label="Category for ${esc(t.name)}">${options}</select></label>
-        ${after}
+        ${t.split_part ? splitCategory(t) : `<label class="m-category">${dot(t.category)}<select data-review-cat="${id}" aria-label="Category for ${esc(t.name)}">${options}</select></label>
+        ${after}`}
       </div>
       ${check}
       ${moreMenu(`Options for ${t.name}`, [
-        t.edited && menuItem("Make a rule…", ruleAttrs(t)),
+        ...splitMenu(t),
+        t.edited && !t.split_part && menuItem("Make a rule…", ruleAttrs(t)),
         menuItem(`Rename ${t.name}`, `data-review-rename="${id}"`),
         menuItem(`Show all from ${t.name}`, `data-show-merchant="${esc(t.name)}"`),
       ])}
@@ -729,6 +731,136 @@ $("#review-all").onclick = async () => {
   loadReview();
 };
 
+// ---------- splits ----------
+// One transaction divided into parts with their own categories. A split shows
+// as one row per part, with ids like "<transaction id>#2".
+
+const NOT_SPENDING = new Set(["Income", "Transfers", "Credit Card Payments", "Investments", "Reimbursements"]);
+
+// A part's category, which is changed from the split, not a dropdown.
+const splitCategory = (t) =>
+  `<span class="rule-cat split-cat">${dot(t.category)}${esc(t.category)}</span>` +
+  `<div class="meta tx-edited">Part of a split · ${money(Math.abs(t.whole_amount))} in all</div>`;
+
+const splitMenu = (t) => t.split_part
+  ? [menuItem("Edit split…", `data-split-edit="${esc(t.tx_id)}"`),
+     menuItem("Undo split", `data-split-undo="${esc(t.tx_id)}"`, true)]
+  : [menuItem("Split…", `data-split-edit="${esc(t.id)}"`)];
+
+let splitTx = null;  // the transaction in the split dialog
+let splitDone = null;  // what to reload after saving
+
+function splitPartRow(amount = "", category = "") {
+  const options = categoryNames().map((c) => `<option${c === category ? " selected" : ""}>${esc(c)}</option>`).join("");
+  return `<div class="split-part row">
+    <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${amount === "" ? "" : Number(amount).toFixed(2)}" aria-label="Amount">
+    <select aria-label="Category">${options}</select>
+    <button type="button" class="link-btn" data-split-remove aria-label="Remove this part">Remove</button>
+  </div>`;
+}
+
+function updateSplitLeft() {
+  const whole = Math.round(Math.abs(splitTx.amount) * 100);
+  const sum = [...document.querySelectorAll("#split-parts input")].reduce((n, i) => n + Math.round((+i.value || 0) * 100), 0);
+  const left = (whole - sum) / 100;
+  $("#split-left").textContent = left === 0 ? "Adds up" : left > 0 ? `${money(left)} left` : `${money(-left)} too much`;
+  $("#split-left").className = left === 0 ? "muted positive" : "muted";
+}
+
+async function openSplit(id, done) {
+  splitTx = await api(`/api/transaction-split?id=${encodeURIComponent(id)}`);
+  splitDone = done;
+  const whole = Math.abs(splitTx.amount);
+  $("#split-text").innerHTML = `<b>${esc(splitTx.name)}</b> · ${dayLabel(splitTx.date)} · ${money(splitTx.amount)}<br><span class="muted">${esc(splitTx.description)}</span>`;
+  const parts = splitTx.parts.length ? splitTx.parts
+    : [{ amount: whole, category: splitTx.category }, { amount: "", category: splitTx.amount > 0 ? "Income" : "Other" }];
+  $("#split-parts").innerHTML = parts.map((p) => splitPartRow(p.amount, p.category)).join("");
+  $("#split-undo").hidden = !splitTx.parts.length;
+  $("#split-msg").textContent = "";
+  updateSplitLeft();
+  $("#split-dialog").showModal();
+}
+
+$("#split-add").onclick = () => {
+  $("#split-parts").insertAdjacentHTML("beforeend", splitPartRow("", splitTx.amount > 0 ? "Income" : "Other"));
+  updateSplitLeft();
+};
+$("#split-parts").addEventListener("input", updateSplitLeft);
+$("#split-parts").addEventListener("click", (e) => {
+  if (!e.target.closest("[data-split-remove]")) return;
+  e.target.closest(".split-part").remove();
+  updateSplitLeft();
+});
+$("#split-cancel").onclick = () => $("#split-dialog").close();
+$("#split-undo").onclick = async () => {
+  await api(`/api/transaction-split?id=${encodeURIComponent(splitTx.id)}`, { method: "DELETE" });
+  $("#split-dialog").close();
+  splitDone?.();
+};
+$("#split-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const parts = [...document.querySelectorAll("#split-parts .split-part")].map((row) => ({
+    amount: +row.querySelector("input").value || 0, category: row.querySelector("select").value }));
+  try {
+    await api("/api/transaction-split", { method: "PUT", body: { id: splitTx.id, parts } });
+    $("#split-dialog").close();
+    splitDone?.();
+    refreshStatus();  // splitting checks it, so the Review count can drop
+  } catch (err) {
+    $("#split-msg").className = "msg error"; $("#split-msg").textContent = err.message;
+  }
+};
+
+// The split items in any ⋯ menu, wherever the row is.
+document.addEventListener("click", async (e) => {
+  const edit = e.target.closest("[data-split-edit]");
+  const undo = e.target.closest("[data-split-undo]");
+  if (!edit && !undo) return;
+  const reload = () => ($("#view-review").hidden ? ($("#view-rules").hidden ? loadTransactions() : loadRules()) : loadReview());
+  if (edit) return openSplit(edit.dataset.splitEdit, reload);
+  await api(`/api/transaction-split?id=${encodeURIComponent(undo.dataset.splitUndo)}`, { method: "DELETE" });
+  reload();
+});
+
+// ---------- reimbursements to sort ----------
+// Money from payment apps counts as income and waits here until you say
+// whether it was pay or someone paying you back.
+
+async function loadReimbursements() {
+  const r = await api("/api/reimbursements");
+  $("#reimb-card").hidden = !r.items.length;
+  if (!r.items.length) return;
+  $("#reimb-sub").textContent = `${r.items.length} ${r.items.length === 1 ? "deposit" : "deposits"} · ` +
+    `${money(r.total)} counted as income for now`;
+  const spending = categoryNames().filter((c) => !NOT_SPENDING.has(c));
+  const choices = `<option value="" selected disabled>What was it?</option>` +
+    `<optgroup label="Paid me back for">${spending.map((c) => `<option>${esc(c)}</option>`).join("")}</optgroup>` +
+    `<optgroup label="Not for one purchase"><option value="Income">Keep as income (pay, sales)</option>` +
+    `<option value="Reimbursements">Reimbursement (not income or spending)</option></optgroup>`;
+  $("#reimb-list").innerHTML = r.items.map((t) => `<div class="item reimb-row">
+      ${avatar(t.merchant, t.name)}
+      <div class="main">
+        <div class="title">${esc(t.name)}</div>
+        <div class="meta">${dayLabel(t.date)} · ${esc(t.account_name)}</div>
+        ${t.hints.length ? `<div class="meta reimb-hints">Before it: ${t.hints.map((h) =>
+          `${esc(h.name)} ${money(-h.amount)} <span class="muted">(${esc(h.category)}, ${dayLabel(h.date)})</span>`).join(" · ")}</div>` : ""}
+      </div>
+      <div class="amount positive">+${money(t.amount)}</div>
+      <div class="reimb-controls">
+        <select data-reimb-cat="${esc(t.id)}" aria-label="What ${money(t.amount)} on ${dayLabel(t.date)} was">${choices}</select>
+        <button type="button" class="btn small secondary" data-split-edit="${esc(t.id)}">Split</button>
+      </div>
+    </div>`).join("");
+}
+
+$("#reimb-list").addEventListener("change", async (e) => {
+  const sel = e.target.closest("[data-reimb-cat]");
+  if (!sel) return;
+  await api("/api/transaction-category", { method: "PUT", body: { id: sel.dataset.reimbCat, category: sel.value } });
+  loadReview();
+  refreshStatus();
+});
+
 // ---------- subscriptions ----------
 
 async function loadSubscriptions() {
@@ -763,6 +895,7 @@ async function loadSubscriptions() {
       s.active && !s.ignored && menuItem(`Move to ${other}s`, `data-sub-kind="${other}" data-key="${esc(s.key)}"`),
       menuItem(label, `data-sub-action="${action}" data-key="${esc(s.key)}"`),
       menuItem("Show its charges", `data-show-merchant="${esc(s.merchant_name)}"`),
+      menuItem("Delete", `data-sub-action="delete" data-key="${esc(s.key)}"`, true),
     ]);
     // Renamed: say which merchant it's from, since that's how it shows in transactions.
     return itemHTML({
@@ -775,10 +908,11 @@ async function loadSubscriptions() {
   const fill = (el, list, action, label, empty) =>
     ($(el).innerHTML = list.length ? list.map((s) => row(s, action, label)).join("") : `<div class="empty">${empty}</div>`);
 
-  fill("#subs-active", activeSubs, "ignore", "Not recurring", "No subscriptions found yet. They show up after 2 to 3 charges.");
-  fill("#bills-active", activeBills, "ignore", "Not recurring", "No bills found yet. Rent and utilities show up here after 2 to 3 charges.");
+  fill("#subs-active", activeSubs, "ignore", "Hide", "No subscriptions found yet. They show up after 2 to 3 charges.");
+  fill("#bills-active", activeBills, "ignore", "Hide", "No bills found yet. Rent and utilities show up here after 2 to 3 charges.");
   fill("#subs-inactive", inactive, "ignore", "Hide", "Nothing here.");
   fill("#subs-ignored", ignored, "restore", "Restore", "Nothing hidden.");
+  $("#subs-delete-hidden").hidden = !ignored.length;
 }
 
 // ---------- subscriptions and bills you add yourself ----------
@@ -868,12 +1002,23 @@ $("#view-subscriptions").addEventListener("click", async (e) => {
 document.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-sub-action]");
   if (!btn) return;
+  const action = btn.dataset.subAction;
+  if (action === "delete" && !confirm(`Delete ${subItems[btn.dataset.key]?.name ?? "this"}? It won't show on this page again, ` +
+      "even when new charges come in. Your transactions aren't affected, and you can bring it back from the Rules page.")) return;
   await api("/api/subscriptions/override", {
     method: "POST",
-    body: { merchant: btn.dataset.key, status: btn.dataset.subAction === "ignore" ? "ignored" : null },
+    body: { merchant: btn.dataset.key, status: { ignore: "ignored", delete: "deleted" }[action] ?? null },
   });
   loadSubscriptions();
 });
+
+$("#subs-delete-hidden").onclick = async () => {
+  const n = Object.values(subItems).filter((s) => s.ignored).length;
+  if (!confirm(`Delete all ${n} hidden? They won't show on this page again. Your transactions aren't affected, ` +
+      "and you can bring any of them back from the Rules page.")) return;
+  await api("/api/subscriptions/delete-hidden", { method: "POST" });
+  loadSubscriptions();
+};
 
 $("#view-subscriptions").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-sub-kind]");
@@ -924,14 +1069,15 @@ async function loadTransactions() {
     ? rows.map((t) => `<tr>
         <td>${dayLabel(t.date)}</td>
         <td class="desc"><div class="tx-merchant">${avatar(t.merchant, t.name, "avatar small")}<div class="tx-name">${esc(t.name)}${t.pending ? '<span class="pending">pending</span>' : ""}<div class="meta">${esc(t.description)}</div></div></div></td>
-        <td class="cat">${dot(t.category)}<select data-tx-id="${esc(t.id)}" aria-label="Category">${catOptions(t.category)}</select>${t.edited
-          ? `<div class="meta tx-edited" title="Changed for just this purchase. ⋯ has Make a rule and Reset.">Just this one</div>` : ""}</td>
+        <td class="cat">${t.split_part ? splitCategory(t) : `${dot(t.category)}<select data-tx-id="${esc(t.id)}" aria-label="Category">${catOptions(t.category)}</select>${t.edited
+          ? `<div class="meta tx-edited" title="Changed for just this purchase. ⋯ has Make a rule and Reset.">Just this one</div>` : ""}`}</td>
         <td class="muted">${esc(t.account_name)}</td>
         <td class="num ${t.amount > 0 ? "positive" : ""}">${t.amount > 0 ? "+" : ""}${money(t.amount)}</td>
         <td class="tx-more">${moreMenu(`Options for ${t.name}, ${dayLabel(t.date)}`, [
           menuItem(`Rename ${t.name}`, `data-tx-rename="${esc(t.id)}"`),
-          t.edited && menuItem("Make a rule…", ruleAttrs(t)),
-          t.edited && menuItem(`Reset to ${t.default_category}`, `data-tx-reset="${esc(t.id)}"`),
+          ...splitMenu(t),
+          t.edited && !t.split_part && menuItem("Make a rule…", ruleAttrs(t)),
+          t.edited && !t.split_part && menuItem(`Reset to ${t.default_category}`, `data-tx-reset="${esc(t.id)}"`),
           menuItem(`Show all from ${t.name}`, `data-show-merchant="${esc(t.name)}"`),
         ])}</td>
       </tr>`).join("")
@@ -1053,11 +1199,23 @@ function renderRules() {
         menu: moreMenu(`Options for ${t.name} on ${dayLabel(t.date)}`, [
           showTx(t), menuItem(`Back to ${t.default_category}`, `data-rule-undo="transaction" data-id="${esc(t.id)}"`, true)]),
       })) },
-    { title: "Subscriptions", hint: "Changes you made on the Subscriptions page.",
+    { title: "Split transactions", hint: "Transactions you divided into parts with their own categories.",
+      rows: d.splits.map((t) => ruleRow({
+        title: `${esc(t.name)} <span class="muted">split into</span> ${t.parts.map((p) => `${money(Math.abs(p.amount))} ${catTag(p.category)}`).join(" ")}`,
+        meta: `<div class="meta">${dayLabel(t.date)} · ${money(t.amount)} · ${esc(t.account_name)}</div>
+               <div class="meta example">${esc(t.description)}</div>`,
+        search: `${t.name} ${t.description} ${t.parts.map((p) => p.category).join(" ")}`,
+        menu: moreMenu(`Options for the split of ${t.name} on ${dayLabel(t.date)}`, [
+          menuItem("Edit split…", `data-split-edit="${esc(t.id)}"`),
+          menuItem("Undo split", `data-split-undo="${esc(t.id)}"`, true)]),
+      })) },
+    { title: "Subscriptions", hint: "Changes you made on the Subscriptions page, including ones you hid or deleted.",
       rows: [
         ...sub.hidden.map((s) => ruleRow({
-          title: `${esc(s.label)} <span class="muted">hidden</span>`, search: `${s.label} hidden`,
-          menu: moreMenu(`Options for ${s.label}`, [menuItem("Show it again", `data-rule-undo="hidden" data-key="${esc(s.key)}"`, true)]),
+          title: `${esc(s.label)} <span class="muted">${s.status === "deleted" ? "deleted" : "hidden"}</span>`,
+          search: `${s.label} ${s.status === "deleted" ? "deleted" : "hidden"}`,
+          menu: moreMenu(`Options for ${s.label}`, [menuItem(s.status === "deleted" ? "Bring it back" : "Show it again",
+                                                           `data-rule-undo="hidden" data-key="${esc(s.key)}"`, true)]),
         })),
         ...sub.names.map((s) => ruleRow({
           title: `${esc(s.label)} <span class="muted">named</span> ${esc(s.name)}`, search: `${s.label} ${s.name}`,

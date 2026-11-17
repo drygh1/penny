@@ -128,17 +128,21 @@ def test_bank_of_america_autopay_on_the_card_is_a_card_payment(client):
     assert month["spending"] == 80.00
 
 
-def test_friend_paying_you_back_is_not_income(client):
-    """A Venmo payback isn't income; given the purchase's category, it lowers that spending."""
+def test_venmo_is_income_until_marked_a_reimbursement(client):
+    """Venmo money counts as income by default. Given the purchase's category, it
+    lowers that spending; as a Reimbursement, it's neither income nor spending."""
     new_account(client, "Checking", [(this_month, "PINECREST GROCERY", -100.00),
                                      (this_month + timedelta(days=1),
                                       "Deposit ACH VENMO TYPE: CASHOUT CO: VENMOACH Trace 091000010137860", 50.00)])
     period = f"{this_month:%Y-%m}"
     b = client.get("/api/spending/breakdown", params={"period": period}).json()
-    assert (b["income"], b["total"], b["income_sources"]) == (0, 100.00, [])
+    assert (b["income"], b["total"]) == (50.00, 100.00)
 
     venmo = next(t for t in client.get("/api/transactions").json() if "VENMO" in t["description"])
-    assert venmo["category"] == "Reimbursements"
+    assert venmo["category"] == "Income"
+    client.put("/api/transaction-category", json={"id": venmo["id"], "category": "Reimbursements"})
+    b = client.get("/api/spending/breakdown", params={"period": period}).json()
+    assert (b["income"], b["total"], b["income_sources"]) == (0, 100.00, [])
     client.put("/api/transaction-category", json={"id": venmo["id"], "category": "Groceries"})
     b = client.get("/api/spending/breakdown", params={"period": period}).json()
     assert (b["income"], b["total"]) == (0, 50.00)
@@ -222,9 +226,53 @@ def test_rules_page_lists_every_rule_and_flags_mixed_merchants(client):
     r = client.get("/api/rules").json()
     [name] = r["names"]
     assert (name["rule_name"], name["count"], name["mixed"]) == ("Venmo", 2, True)
-    assert {c["category"] for c in name["auto_categories"]} == {"Transfers", "Reimbursements"}
+    assert {c["category"] for c in name["auto_categories"]} == {"Transfers", "Income"}
     [rule] = r["merchant_categories"]
     assert (rule["rule_category"], rule["mixed"]) == ("Groceries", False)
     assert len(r["combined"]) == 1 and r["combined"][0]["mixed"]
     [one] = r["transaction_categories"]
     assert (one["category"], one["default_category"]) == ("Dining", "Groceries")
+
+
+def test_reimbursements_to_sort_and_splitting_one(client):
+    """A $1,000 Venmo cash-out: $800 paid back rent, $200 was pay."""
+    new_account(client, "Checking", [(this_month, "JUNIPER APARTMENTS RENT", -1600.00),
+                                     (this_month + timedelta(days=2), "Deposit ACH VENMO TYPE: CASHOUT CO: VENMO", 1000.00),
+                                     (this_month + timedelta(days=3), "Deposit ACH VENMO TYPE: CASHOUT CO: VENMO REF 2", 40.00)])
+    period = f"{this_month:%Y-%m}"
+    totals = lambda: (lambda b: (b["income"], b["total"]))(client.get("/api/spending/breakdown", params={"period": period}).json())
+    r = client.get("/api/reimbursements").json()
+    assert [t["amount"] for t in r["items"]] == [40.00, 1000.00] and r["total"] == 1040.00
+    big = r["items"][1]
+    assert big["hints"][0]["amount"] == -1600.00  # the rent, to jog your memory
+    assert totals() == (1040.00, 1600.00)  # income until sorted
+
+    # Parts must add up.
+    bad = client.put("/api/transaction-split", json={"id": big["id"], "parts": [
+        {"amount": 800, "category": "Housing"}, {"amount": 150, "category": "Income"}]})
+    assert bad.status_code == 400 and "Add $50.00" in bad.json()["detail"]
+    assert client.put("/api/transaction-split", json={"id": big["id"], "parts": [
+        {"amount": 1000, "category": "Housing"}]}).status_code == 400
+    assert client.put("/api/transaction-split", json={"id": big["id"], "parts": [
+        {"amount": 800, "category": "Housing"}, {"amount": 200, "category": "Income"}]}).status_code == 200
+    assert totals() == (240.00, 800.00)  # rent's back half lowers Housing; the rest is pay
+    # Both parts show, and it's sorted and checked.
+    parts = [t for t in client.get("/api/transactions").json() if t["tx_id"] == big["id"]]
+    assert sorted((t["amount"], t["category"]) for t in parts) == [(200.0, "Income"), (800.0, "Housing")]
+    assert all(t["reviewed"] for t in parts)
+    assert [t["amount"] for t in client.get("/api/reimbursements").json()["items"]] == [40.00]
+    assert client.put("/api/transaction-category", json={"id": parts[0]["id"], "category": "Dining"}).status_code == 400
+    [split] = client.get("/api/rules").json()["splits"]
+    assert len(split["parts"]) == 2
+
+    # The small one was dinner; renaming Housing reaches the split too.
+    small = client.get("/api/reimbursements").json()["items"][0]
+    client.put("/api/transaction-category", json={"id": small["id"], "category": "Dining"})
+    assert client.get("/api/reimbursements").json()["items"] == []
+    client.put("/api/categories", json={"name": "Housing", "new_name": "Home"})
+    assert {t["category"] for t in client.get("/api/transactions").json() if t["tx_id"] == big["id"]} == {"Home", "Income"}
+
+    # Undo puts it back together.
+    client.delete("/api/transaction-split", params={"id": big["id"]})
+    assert totals() == (1000.00, 1560.00)
+    assert [t["amount"] for t in client.get("/api/reimbursements").json()["items"]] == [1000.00]

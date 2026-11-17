@@ -144,7 +144,7 @@ A subscription Penny finds is named after its merchant. Choose **Rename** in its
 
 ## Subscriptions you add yourself
 
-Penny finds most subscriptions and bills on its own, but some it can't: several subscriptions billed together, or a company whose charges come in under names that keep changing (Apple is a common one). On the **Subscriptions** page, click **Add one** under Subscriptions or Bills and enter the name, the price of each charge, how often it charges and the next charge date. Penny counts it in the monthly and yearly totals and in **Coming up** on the dashboard, and moves the next date forward on its own. Each one you added has **Edit** and **Delete** in its **⋯** menu. If Penny also found the same charge, choose **Not recurring** in the **⋯** menu of Penny's one so it isn't counted twice. Adding one doesn't change any transactions.
+Penny finds most subscriptions and bills on its own, but some it can't: several subscriptions billed together, or a company whose charges come in under names that keep changing (Apple is a common one). On the **Subscriptions** page, click **Add one** under Subscriptions or Bills and enter the name, the price of each charge, how often it charges and the next charge date. Penny counts it in the monthly and yearly totals and in **Coming up** on the dashboard, and moves the next date forward on its own. Each one you added has **Edit** and **Delete** in its **⋯** menu. If Penny also found the same charge, choose **Hide** in the **⋯** menu of Penny's one so it isn't counted twice. Adding one doesn't change any transactions.
 
 ## Merchant rules and pictures
 
@@ -168,7 +168,10 @@ The **Rules** page lists everything you've told Penny: merchant names, merchant 
 
 A merchant counts as recurring when it charges on a regular schedule (weekly to yearly) for a steady amount, after 2 to 3 charges. When one merchant bills for several things (an app store billing for several apps), its charges are grouped by price and each group is checked on its own.
 
-Recurring charges in Housing or Utilities & Bills are listed as **Bills**; everything else is a **Subscription**. Change the category from the dropdown. Each one's **⋯** menu can rename it, move it between Bills and Subscriptions, or mark it **Not recurring** to hide it.
+Recurring charges in Housing or Utilities & Bills are listed as **Bills**; everything else is a **Subscription**. Change the category from the dropdown. Each one's **⋯** menu can rename it, move it between Bills and Subscriptions, **Hide** it, or **Delete** it.
+
+- **Hide** leaves it out of your totals but keeps it in the **Hidden** list, where **Restore** puts it back.
+- **Delete** is for ones that were never a subscription or bill at all. It disappears from the page, and new charges don't bring it back. **Delete all** on the Hidden list deletes every hidden one at once. Your transactions aren't affected, and the **Rules** page can bring any of them back.
 
 ## Dates
 
@@ -181,8 +184,9 @@ Add, rename or delete categories under **Settings → Categories**.
 - Renaming a category keeps its transactions, rules and color, and transactions Penny would have filed under the old name land in the new one. Income, Reimbursements, Transfers, Other, Credit Card Payments and Investments are part of Penny's totals, so their names can't change.
 
 - When you delete a category, you choose where its transactions go. Merchant rules pointing to it move too. Future transactions that would have landed in it go to the new category.
-- Income, Reimbursements, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Reimbursements, Transfers, Credit Card Payments and Investments.
-- **Money from Venmo, Zelle or Cash App is a Reimbursement, not income.** It's usually a friend paying you back, so it counts as neither income nor spending. Give it the category of what it paid back (Dining for a shared dinner) and it lowers that spending instead. If it really is pay, move it to Income. Paying off a card isn't spending, because the purchases on it already counted. Money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved. Other catches anything unmatched.
+- Income, Reimbursements, Transfers and Other are built in and can't be deleted. Spending totals leave out Income, Reimbursements, Transfers, Credit Card Payments and Investments. Paying off a card isn't spending, because the purchases on it already counted. Money put into Fidelity, Robinhood, Coinbase and similar is still yours, so it counts toward what you saved. Other catches anything unmatched.
+- **Money from Venmo, Zelle or Cash App counts as income unless you say it was a reimbursement.** If it was a friend paying you back, give it the category of what it paid back (Dining for a shared dinner) and it lowers that spending instead, or move it to Reimbursements to count it as neither income nor spending. The **Review** page lists every one you haven't sorted under **Payment-app money to sort**, each with the biggest purchases from the two weeks before it to jog your memory: pick what it paid back, **Keep as income**, or **Reimbursement**.
+- **Split a transaction** when one covered several things, like a Venmo cash-out that was part rent share and part pay. Choose **Split…** in its **⋯** menu (or **Split** under Payment-app money to sort) and divide it into parts, each with its own category; the parts must add up to the whole amount. Every total counts the parts instead of the whole, and each part shows as its own row. **Undo split** puts it back together. Splits are listed on the **Rules** page.
 - **Credit Card Payments** are recognized from a card issuer's name plus a payment word in checking ("CAPITAL ONE ... ONLINE PMT", "CITI CARD E-PAYMENT"), payment wording on the card itself, and matching amounts moving between your accounts.
 - **Money arriving on a credit card is never income.** On an account that owes money, anything mentioning a payment (like a pending "PENDING PAYMENT" or "ONLINE/MOBILE RECURRING") is a Credit Card Payment, and anything else is a refund that takes the category the merchant's purchases usually have.
 - Every category gets its own color, from 20 colors ordered so neighbors stay distinct for colorblind readers too. Deleting a category frees its color for the next one you add; only past 20 categories does one show in gray.

@@ -102,6 +102,17 @@ CREATE TABLE IF NOT EXISTS transaction_categories (
     category TEXT NOT NULL
 );
 
+-- One transaction divided into parts, each with its own category, like a Venmo
+-- cash-out that paid back both rent and a dinner. The parts add up to the
+-- transaction's amount, and every total counts the parts instead of the whole.
+CREATE TABLE IF NOT EXISTS transaction_splits (
+    tx_id    TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    part     INTEGER NOT NULL,
+    amount   REAL NOT NULL,
+    category TEXT NOT NULL,
+    PRIMARY KEY (tx_id, part)
+);
+
 -- Transactions you've checked (or un-checked) on the Review page. Without a row
 -- here, anything posted before the review_since setting (30 days before Penny
 -- first had this) counts as checked, and anything newer doesn't.

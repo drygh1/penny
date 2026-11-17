@@ -187,7 +187,11 @@ def keeping_marks(conn):
         FROM transactions t
         LEFT JOIN reviewed r ON r.tx_id = t.id
         LEFT JOIN transaction_categories o ON o.tx_id = t.id
-        WHERE r.tx_id IS NOT NULL OR o.tx_id IS NOT NULL""").fetchall()
+        WHERE r.tx_id IS NOT NULL OR o.tx_id IS NOT NULL
+           OR t.id IN (SELECT tx_id FROM transaction_splits)""").fetchall()
+    splits: dict[str, list] = {}
+    for r in conn.execute("SELECT tx_id, part, amount, category FROM transaction_splits ORDER BY tx_id, part"):
+        splits.setdefault(r["tx_id"], []).append((r["part"], r["amount"], r["category"]))
     before = {r[0] for r in conn.execute("SELECT id FROM transactions")}
     yield
     now_rows = {r["id"]: r for r in conn.execute(
@@ -226,6 +230,10 @@ def keeping_marks(conn):
         if s["category"] is not None:
             conn.execute("INSERT OR IGNORE INTO transaction_categories (tx_id, category) VALUES (?, ?)",
                          (target, s["category"]))
+        # A split moves only to the same amount; with a tip added, its parts wouldn't add up.
+        if s["id"] in splits and round(now_rows[target]["amount"], 2) == round(s["amount"], 2):
+            conn.executemany("INSERT OR IGNORE INTO transaction_splits (tx_id, part, amount, category) VALUES (?, ?, ?, ?)",
+                             [(target, *part) for part in splits[s["id"]]])
 
 
 _PAYMENT_WORDS = re.compile(r"(?<![a-z])(payment|pmt|pymt|autopay)", re.I)

@@ -26,13 +26,13 @@ def test_categorize():
     assert categorize("CURRENT BANK MISC", -10) == "Other"  # "rent" inside "current" must not match
 
 
-def test_payment_app_money_is_a_reimbursement():
+def test_payment_app_money_is_income_by_default():
     for d in ("Deposit ACH VENMO TYPE: CASHOUT CO: VENMOACH Trace 091000010137860",
               "DEPOSIT ACH VENMOTYPE: CASHOUT CO: VENMO ACH Trace 091000016127571",
               "VENMO CASHOUT PPD ID: 5264681992",
               "Deposit ACH ZELLE TYPE: CASHOUT CO: ZELLEACH Trace 000000000000268",
               "CASH APP*JANE DOE"):
-        assert categorize(d, 50) == "Reimbursements", d
+        assert categorize(d, 50) == "Income", d
     # Sending money stays where it was.
     assert categorize("Withdrawal ACH ZELLE TYPE: PAYMENT", -40) == "Other"
 

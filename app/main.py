@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth, backup, db, demo, importer, pdf_statements, remote, simplefin, subscriptions
-from .categorize import (COLOR_SLOTS, FIXED_NAMES, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name,
+from .categorize import (COLOR_SLOTS, FIXED_NAMES, LOCKED_CATEGORIES, NON_SPENDING, categorize, description_key, display_name, is_payment_app,
                          institution_words, normalize_merchant)
 from .sync import (card_money_in, match_transfers, purchase_date, refresh_categories, snapshot_balances, sync, transfer_pairs, upsert_account,
                    upsert_transaction)
@@ -122,22 +122,32 @@ async def guard(request: Request, call_next):
 
 # `merchant` is the combined merchant (see merchant_aliases); rules, logos and
 # everything shown use it. `own_merchant` is what the bank's wording gave.
-TX_SELECT = """
-    SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.merchant, t.own_merchant, t.pending,
-           COALESCE(o.category, d.category, r.category, t.category) AS category,
+# A split transaction (transaction_splits) comes out as one row per part, with
+# id "<transaction id>#<part>", its part's amount and category; `tx_id` is
+# always the whole transaction's id, and `whole_amount` its full amount.
+_TX_COLUMNS = ("t.account_id, t.posted, t.description, t.payee, t.pending, t.category, t.affects_balance, "
+               "t.merchant AS own_merchant, COALESCE(ma.merchant, t.merchant) AS merchant, t.amount AS whole_amount")
+TX_SELECT = f"""
+    SELECT t.id, t.tx_id, t.split_part, t.account_id, t.posted, t.amount, t.whole_amount, t.description,
+           t.merchant, t.own_merchant, t.pending,
+           COALESCE(t.split_category, o.category, d.category, r.category, t.category) AS category,
            COALESCE(d.category, r.category, t.category) AS default_category,
-           o.category IS NOT NULL AS edited,
+           (t.split_category IS NOT NULL OR o.category IS NOT NULL) AS edited,
            COALESCE(rv.reviewed, t.posted < COALESCE(
                (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'review_since'), 0)) AS reviewed,
            d.pattern AS description_rule,
            strftime('%Y-%m', t.posted, 'unixepoch', 'localtime') AS month,
            COALESCE(a.nickname, a.name) AS account_name
-    FROM (SELECT t.id, t.account_id, t.posted, t.amount, t.description, t.payee, t.pending, t.category,
-                 t.affects_balance, t.merchant AS own_merchant, COALESCE(ma.merchant, t.merchant) AS merchant
-          FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant) t
+    FROM (SELECT t.id, t.id AS tx_id, NULL AS split_part, NULL AS split_category, t.amount, {_TX_COLUMNS}
+          FROM transactions t LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant
+          WHERE t.id NOT IN (SELECT tx_id FROM transaction_splits)
+          UNION ALL
+          SELECT t.id || '#' || s.part, t.id, s.part, s.category, s.amount, {_TX_COLUMNS}
+          FROM transaction_splits s JOIN transactions t ON t.id = s.tx_id
+          LEFT JOIN merchant_aliases ma ON ma.alias = t.merchant) t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN transaction_categories o ON o.tx_id = t.id
-    LEFT JOIN reviewed rv ON rv.tx_id = t.id
+    LEFT JOIN reviewed rv ON rv.tx_id = t.tx_id
     LEFT JOIN merchant_rules r ON r.merchant = t.merchant
     LEFT JOIN description_rules d ON d.merchant = t.merchant AND d.pattern = (
         SELECT d2.pattern FROM description_rules d2
@@ -772,7 +782,7 @@ def rename_category(body: CategoryRenameBody, conn=Depends(get_conn)):
     with conn:
         conn.execute("UPDATE categories SET name = ? WHERE name = ?", (new, old))
         for table in ("transactions", "merchant_rules", "description_rules", "transaction_categories",
-                      "manual_recurring"):
+                      "transaction_splits", "manual_recurring"):
             conn.execute(f"UPDATE {table} SET category = ? WHERE category = ?", (new, old))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (new, old))
         conn.execute(
@@ -800,6 +810,7 @@ def delete_category(name: str, move_to: str = "Other", conn=Depends(get_conn)):
         conn.execute("UPDATE transactions SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE merchant_rules SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE transaction_categories SET category = ? WHERE category = ?", (move_to, name))
+        conn.execute("UPDATE transaction_splits SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE description_rules SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE manual_recurring SET category = ? WHERE category = ?", (move_to, name))
         conn.execute("UPDATE category_aliases SET new_name = ? WHERE new_name = ?", (move_to, name))
@@ -967,8 +978,10 @@ def set_transaction_category(body: TransactionCategoryBody, conn=Depends(get_con
     if body.category not in db.category_names(conn):
         fail(Exception(f"Unknown category: {body.category}"))
     if not conn.execute("SELECT 1 FROM transactions WHERE id = ?", (body.id,)).fetchone():
-        fail(Exception("That transaction no longer exists."))
+        fail(Exception("That transaction no longer exists." if "#" not in body.id
+                       else "That's part of a split. Use Edit split to change its parts."))
     with conn:
+        conn.execute("DELETE FROM transaction_splits WHERE tx_id = ?", (body.id,))  # one category replaces a split
         conn.execute(
             "INSERT INTO transaction_categories (tx_id, category) VALUES (?, ?) "
             "ON CONFLICT(tx_id) DO UPDATE SET category = excluded.category",
@@ -985,6 +998,7 @@ REVIEW_RECENT_DAYS = 60
 
 
 def mark_reviewed(conn, ids: list[str], reviewed: bool = True):
+    ids = list(dict.fromkeys(i.split("#", 1)[0] for i in ids))  # a split's part ("id#2") checks its transaction
     now = int(time.time())
     conn.executemany("INSERT INTO reviewed (tx_id, reviewed, reviewed_at) "
                      "SELECT id, ?, ? FROM transactions WHERE id = ? "
@@ -1038,6 +1052,101 @@ def reset_transaction_category(id: str, conn=Depends(get_conn)):
     with conn:
         conn.execute("DELETE FROM transaction_categories WHERE tx_id = ?", (id,))
     return {"ok": True}
+
+
+# ---------- splits ----------
+# One transaction divided into parts with their own categories, like a Venmo
+# cash-out that paid back rent and a dinner, with some of it pay.
+
+class SplitPart(BaseModel):
+    amount: float  # dollars, positive; it takes the transaction's sign
+    category: str
+
+
+class SplitBody(BaseModel):
+    id: str
+    parts: list[SplitPart]
+
+
+@app.put("/api/transaction-split")
+def split_transaction(body: SplitBody, conn=Depends(get_conn)):
+    """Divide a transaction into parts. They must add up to its amount."""
+    tx = conn.execute("SELECT amount FROM transactions WHERE id = ?", (body.id,)).fetchone()
+    if not tx:
+        fail(Exception("That transaction no longer exists."))
+    names = db.category_names(conn)
+    parts = [p for p in body.parts if round(p.amount, 2) != 0]
+    if len(parts) < 2:
+        fail(Exception("Split it into at least two parts."))
+    if any(p.amount < 0 for p in parts):
+        fail(Exception("Enter each part as a positive amount."))
+    if bad := next((p.category for p in parts if p.category not in names), None):
+        fail(Exception(f"Unknown category: {bad}"))
+    whole = round(abs(tx["amount"]) * 100)
+    total = sum(round(p.amount * 100) for p in parts)
+    if total != whole:
+        left = (whole - total) / 100
+        fail(Exception(f"The parts add up to ${total / 100:,.2f}, not ${whole / 100:,.2f}. "
+                       f"{'Add' if left > 0 else 'Take off'} ${abs(left):,.2f}."))
+    sign = -1 if tx["amount"] < 0 else 1
+    with conn:
+        conn.execute("DELETE FROM transaction_splits WHERE tx_id = ?", (body.id,))
+        conn.execute("DELETE FROM transaction_categories WHERE tx_id = ?", (body.id,))
+        conn.executemany("INSERT INTO transaction_splits (tx_id, part, amount, category) VALUES (?, ?, ?, ?)",
+                         [(body.id, i, sign * round(p.amount, 2), p.category) for i, p in enumerate(parts, 1)])
+        mark_reviewed(conn, [body.id])
+    return {"ok": True}
+
+
+@app.delete("/api/transaction-split")
+def unsplit_transaction(id: str, conn=Depends(get_conn)):
+    """Put a split transaction back together, in its usual category."""
+    with conn:
+        conn.execute("DELETE FROM transaction_splits WHERE tx_id = ?", (id.split("#", 1)[0],))
+    return {"ok": True}
+
+
+@app.get("/api/transaction-split")
+def get_split(id: str, conn=Depends(get_conn)):
+    """A transaction and its parts, for the split form."""
+    tx_id = id.split("#", 1)[0]
+    rows = conn.execute(f"SELECT * FROM ({TX_SELECT}) WHERE tx_id = ? ORDER BY split_part", (tx_id,)).fetchall()
+    if not rows:
+        fail(Exception("That transaction no longer exists."))
+    t = rows[0]
+    name = merchant_namer(conn)
+    return {"id": tx_id, "amount": t["whole_amount"], "description": t["description"], "name": name(t["merchant"]),
+            "date": date.fromtimestamp(t["posted"]).isoformat(), "category": t["category"],
+            "parts": [{"amount": abs(r["amount"]), "category": r["category"]} for r in rows if r["split_part"]]}
+
+
+# ---------- reimbursements ----------
+
+REIMBURSEMENT_HINT_DAYS = 14
+
+
+@app.get("/api/reimbursements")
+def reimbursements(conn=Depends(get_conn)):
+    """Payment-app money in (Venmo, Zelle, Cash App) that you haven't sorted yet,
+    newest first. It counts as income until you say it paid something back. Each
+    comes with the biggest purchases from the two weeks before it, to help
+    remember what it paid back."""
+    rows = [r for r in conn.execute(f"""SELECT * FROM ({TX_SELECT})
+        WHERE category = 'Income' AND NOT edited AND amount > 0 ORDER BY posted DESC""").fetchall()
+            if is_payment_app(r["description"])]
+    name = merchant_namer(conn)
+    window = REIMBURSEMENT_HINT_DAYS * 86400
+    items = []
+    for r in rows:
+        hints = conn.execute(f"""
+            SELECT merchant, amount, category, posted FROM ({TX_SELECT})
+            WHERE amount < 0 AND {SPENDING_FILTER} AND posted BETWEEN ? AND ?
+            ORDER BY amount LIMIT 4""", (r["posted"] - window, r["posted"])).fetchall()
+        items.append(dict(r) | {
+            "date": date.fromtimestamp(r["posted"]).isoformat(), "name": name(r["merchant"]),
+            "hints": [{"name": name(h["merchant"]), "amount": h["amount"], "category": h["category"],
+                       "date": date.fromtimestamp(h["posted"]).isoformat()} for h in hints]})
+    return {"items": items, "total": round(sum(r["amount"] for r in rows), 2)}
 
 
 class DescriptionRuleBody(BaseModel):
@@ -1266,7 +1375,14 @@ def rules(conn=Depends(get_conn)):
 
     one_offs = conn.execute(f"""
         SELECT id, posted, amount, description, merchant, category, default_category, account_name
-        FROM ({TX_SELECT}) WHERE edited ORDER BY posted DESC""").fetchall()
+        FROM ({TX_SELECT}) WHERE edited AND split_part IS NULL ORDER BY posted DESC""").fetchall()
+    splits = {}
+    for r in conn.execute(f"SELECT * FROM ({TX_SELECT}) WHERE split_part IS NOT NULL ORDER BY posted DESC, split_part"):
+        sp = splits.setdefault(r["tx_id"], {"id": r["tx_id"], "date": date.fromtimestamp(r["posted"]).isoformat(),
+                                            "name": name(r["merchant"]), "amount": r["whole_amount"],
+                                            "description": r["description"], "account_name": r["account_name"],
+                                            "parts": []})
+        sp["parts"].append({"amount": r["amount"], "category": r["category"]})
     manual = conn.execute("SELECT id, name FROM manual_recurring ORDER BY name").fetchall()
     return {
         "names": [about(r["merchant"]) | {"rule_name": r["name"]}
@@ -1285,6 +1401,7 @@ def rules(conn=Depends(get_conn)):
                      for r in conn.execute("SELECT alias, merchant FROM merchant_aliases ORDER BY merchant, alias")],
         "transaction_categories": [dict(r) | {"date": date.fromtimestamp(r["posted"]).isoformat(), "name": name(r["merchant"])}
                                    for r in one_offs],
+        "splits": list(splits.values()),
         "subscriptions": {
             "hidden": [dict(r) | {"label": recurring_label(r["key"])} for r in conn.execute(
                 "SELECT merchant AS key, status FROM subscription_overrides ORDER BY merchant")],
@@ -1370,6 +1487,8 @@ def get_subscriptions(conn=Depends(get_conn)):
     merchant_names = {s.key: s.name for s in found}
     for s in found:
         s.name = custom.get(s.key, s.name)
+    # Ones you deleted stay off the page, even when new charges come in.
+    found = [s for s in found if overrides.get(s.key) != "deleted"]
     found += [subscriptions.manual(dict(r), date.today()) for r in conn.execute("SELECT * FROM manual_recurring")]
     found.sort(key=lambda r: (not r.active, -r.monthly_cost))
     active = [s for s in found if s.active and not s.ignored]
@@ -1476,8 +1595,10 @@ def set_subscription_kind(body: KindBody, conn=Depends(get_conn)):
 
 
 class OverrideBody(BaseModel):
-    merchant: str       # the subscription's key
-    status: str | None  # "ignored" or null to restore
+    merchant: str  # the subscription's key
+    # "ignored" hides it (it stays in the Hidden list), "deleted" leaves it off
+    # the page entirely, and null puts it back.
+    status: Literal["ignored", "deleted"] | None
 
 
 @app.post("/api/subscriptions/override")
@@ -1491,6 +1612,14 @@ def subscription_override(body: OverrideBody, conn=Depends(get_conn)):
                 "ON CONFLICT(merchant) DO UPDATE SET status = excluded.status",
                 (body.merchant, body.status))
     return {"ok": True}
+
+
+@app.post("/api/subscriptions/delete-hidden")
+def delete_hidden_subscriptions(conn=Depends(get_conn)):
+    """Delete everything in the Hidden list at once."""
+    with conn:
+        n = conn.execute("UPDATE subscription_overrides SET status = 'deleted' WHERE status = 'ignored'").rowcount
+    return {"ok": True, "deleted": n}
 
 
 # ---------- CSV import ----------

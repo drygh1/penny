@@ -219,8 +219,13 @@ def display_name(merchant: str) -> str:
     return " ".join(w.capitalize() for w in merchant.split())
 
 
-# Money from a payment app is usually a friend paying you back, not pay.
+# Money from a payment app counts as income until you say it was someone
+# paying you back (Reimbursements, or the category of what it paid back).
 _PEER_APP = re.compile(r"(?<![a-z])(venmo|zelle|cash app|square cash)")
+
+
+def is_payment_app(description: str | None) -> bool:
+    return bool(_PEER_APP.search((description or "").lower()))
 
 
 def categorize(description: str, amount: float) -> str:
@@ -228,7 +233,7 @@ def categorize(description: str, amount: float) -> str:
     if _is_card_payment(text, amount):
         return "Credit Card Payments"
     if amount > 0 and _PEER_APP.search(text):
-        return "Reimbursements"
+        return "Income"
     for category, pattern in _PATTERNS:
         if pattern.search(text):
             # A positive amount at a store (a refund) keeps the store's

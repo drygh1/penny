@@ -96,3 +96,23 @@ def test_rename_a_found_subscription_only(client):
     assert found_item(client, key)["name"] == "Disney"
     assert client.put("/api/subscriptions/name", json={"key": key, "name": "x" * 61}).status_code == 400
     assert client.put("/api/subscriptions/name", json={"key": "manual:1", "name": "Nope"}).status_code == 400
+
+
+def test_delete_a_found_subscription_and_bring_it_back(client):
+    keys = lambda: {s["key"] for s in client.get("/api/subscriptions").json()["items"]}
+    total = lambda: client.get("/api/subscriptions").json()["monthly_total"]
+    disney, peacock = found_item(client, "disney plus")["key"], found_item(client, "peacock")["key"]
+    before = total()
+
+    client.post("/api/subscriptions/override", json={"merchant": disney, "status": "deleted"})
+    assert disney not in keys() and total() < before  # gone from the page and the totals
+    # Hidden ones can all be deleted at once.
+    client.post("/api/subscriptions/override", json={"merchant": peacock, "status": "ignored"})
+    assert found_item(client, peacock)["ignored"]
+    assert client.post("/api/subscriptions/delete-hidden").json()["deleted"] == 1
+    assert peacock not in keys()
+    assert {s["status"] for s in client.get("/api/rules").json()["subscriptions"]["hidden"]} == {"deleted"}
+
+    client.post("/api/subscriptions/override", json={"merchant": disney, "status": None})
+    assert disney in keys()
+    assert client.post("/api/subscriptions/override", json={"merchant": disney, "status": "gone"}).status_code == 422

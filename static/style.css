@@ -258,6 +258,24 @@ main { max-width: 1160px; margin: 0 auto; padding: 28px 32px 48px; display: grid
 .rule-row .example { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rule-cat { display: inline-flex; align-items: center; margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-2); }
 .rules-check { border: 1px solid var(--warning-ink); }
+/* Payment-app money to sort, and splitting a transaction */
+.reimb-hints { font-size: 12px; }
+.reimb-controls { display: flex; align-items: center; gap: 6px; }
+.reimb-controls select { width: 210px; }
+.split-cat { margin-left: 0; }
+#split-dialog { width: min(520px, calc(100vw - 32px)); }
+.split-parts { display: grid; gap: 8px; margin-top: 12px; }
+.split-part { flex-wrap: nowrap; gap: 8px; }
+.split-part input { width: 120px; flex: none; }
+.split-part select { flex: 1; min-width: 0; width: auto; }
+.split-tools { justify-content: space-between; margin-top: 8px; }
+.danger-text { color: var(--critical); margin-right: auto; }
+@media (max-width: 760px) {
+  .reimb-row { flex-wrap: wrap; }
+  .reimb-row .main { flex-basis: calc(100% - 140px); }
+  .reimb-controls { width: 100%; padding-left: 46px; }
+  .reimb-controls select { flex: 1; width: auto; min-width: 0; }
+}
 .merchant-row { align-items: center; }
 .merchant-row .example { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-controls { display: grid; justify-items: end; gap: 2px; }
