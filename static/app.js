@@ -658,6 +658,7 @@ let reviewById = {};  // the rows on screen, by id
 let reviewRemaining = 0;
 // On Review and Transactions, a row you just changed stays until you leave the
 // page (or change the filters), so its "Make a rule" link is still there to click.
+// On Review, making the rule finishes the row and it goes.
 const keepVisible = new Set();
 
 async function withKept(rows, order) {
@@ -786,7 +787,13 @@ $("#rule-form").onsubmit = async (e) => {
     await api("/api/transaction-rule", { method: "POST", body: {
       id: form.dataset.id, pattern: form.scope.value === "description" ? $("#rule-pattern").value : null } });
     $("#rule-dialog").close();
-    $("#view-review").hidden ? loadTransactions() : loadReview();
+    if ($("#view-review").hidden) {
+      loadTransactions();
+      refreshStatus();  // making a rule checks it, so the Review count can drop
+    } else {
+      keepVisible.delete(form.dataset.id);  // done with it, so it goes like ✓ does
+      loadReview();
+    }
   } catch (err) {
     $("#rule-msg").className = "msg error"; $("#rule-msg").textContent = err.message;
   }

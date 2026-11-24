@@ -1323,7 +1323,8 @@ class TransactionRuleBody(BaseModel):
 def make_transaction_rule(body: TransactionRuleBody, conn=Depends(get_conn)):
     """Make a rule from a purchase's category. The purchase then follows the rule,
     unless the rule doesn't reach it (a stronger description rule, or a pattern
-    that isn't in its description): then it keeps the category you gave it."""
+    that isn't in its description): then it keeps the category you gave it.
+    Either way it's checked, so it leaves the Review page."""
     tx_sql = f"SELECT merchant, category, default_category FROM ({TX_SELECT}) WHERE id = ?"
     tx = conn.execute(tx_sql, (body.id,)).fetchone()
     if not tx:
@@ -1335,6 +1336,8 @@ def make_transaction_rule(body: TransactionRuleBody, conn=Depends(get_conn)):
                                                  category=tx["category"]), conn)
     if conn.execute(tx_sql, (body.id,)).fetchone()["default_category"] == tx["category"]:
         reset_transaction_category(body.id, conn)
+    with conn:
+        mark_reviewed(conn, [body.id])  # making a rule from it is checking it
     return {"ok": True}
 
 

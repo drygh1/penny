@@ -137,6 +137,23 @@ def test_purchase_keeps_its_category_when_the_rule_does_not_reach_it(client):
     assert only(client, -3)["category"] == "Travel"
 
 
+def test_making_a_rule_checks_the_purchase(client):
+    tx = only(client, -10)
+    client.put("/api/transaction-category", json={"id": tx["id"], "category": "Dining"})
+    client.post("/api/review", json={"ids": [tx["id"]], "reviewed": False})
+    before = client.get("/api/review").json()
+    assert tx["id"] in [t["id"] for t in before["items"]]
+
+    # A rule that doesn't reach it still checks it, and nothing else is checked.
+    client.post("/api/transaction-rule", json={"id": tx["id"], "pattern": "nothing like it"})
+    after = client.get("/api/review").json()
+    assert [t["id"] for t in after["items"]] == [t["id"] for t in before["items"] if t["id"] != tx["id"]]
+
+    client.post("/api/review", json={"ids": [tx["id"]], "reviewed": False})
+    client.post("/api/transaction-rule", json={"id": tx["id"]})
+    assert tx["id"] not in [t["id"] for t in client.get("/api/review").json()["items"]]
+
+
 def test_rule_needs_words_and_a_real_transaction(client):
     tx = only(client, -10)
     assert client.post("/api/transaction-rule", json={"id": tx["id"], "pattern": "123"}).status_code == 400
