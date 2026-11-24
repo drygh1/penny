@@ -532,7 +532,15 @@ async function loadBudget() {
 
   $("#budget-title").textContent = `${monthLabel(b.month, "long")} budget`;
   $("#bg-budgeted").textContent = fmt0.format(b.budgeted);
-  $("#bg-budgeted-sub").textContent = b.income > 0 ? `${Math.round((b.budgeted / b.income) * 100)}% of income this month` : "";
+  // Budget against a year's average income, so one big or small month doesn't skew it.
+  const avgIncome = b.average_income > 0 ? b.average_income : null;
+  $("#bg-income").textContent = avgIncome ? fmt0.format(avgIncome) : "—";
+  const unbudgeted = avgIncome ? avgIncome - b.budgeted : 0;
+  $("#bg-income-sub").textContent = !avgIncome ? "No income yet"
+    : `a month, last ${b.income_months === 1 ? "month" : `${b.income_months} months`} · `
+      + (unbudgeted >= 0 ? `${fmt0.format(unbudgeted)} not budgeted` : `${fmt0.format(-unbudgeted)} over`);
+  $("#bg-budgeted-sub").textContent = avgIncome ? `${Math.round((b.budgeted / avgIncome) * 100)}% of average income`
+    : b.income > 0 ? `${Math.round((b.budgeted / b.income) * 100)}% of income this month` : "";
   $("#bg-spent").textContent = fmt0.format(b.spent);
   $("#bg-spent-sub").textContent = b.unbudgeted_spent > 0 ? `plus ${fmt0.format(b.unbudgeted_spent)} outside your budgets` : "";
   const over = b.left < 0;

@@ -916,6 +916,7 @@ def spending_breakdown(period: str | None = None, month: str | None = None, conn
 # ---------- budget ----------
 
 BUDGET_AVERAGE_MONTHS = 3
+INCOME_AVERAGE_MONTHS = 12
 
 
 def month_shift(month: str, n: int) -> str:
@@ -986,7 +987,23 @@ def budget(month: str | None = None, conn=Depends(get_conn)):
         "unbudgeted_spent": round(sum(c["spent"] for c in rows if c["budget"] is None), 2),
         "income": round(income, 2),
         "average_months": len(known),
+        **average_income(conn, month),
     }
+
+
+def average_income(conn, month: str) -> dict:
+    """Monthly income averaged over the year before `month`, to budget against.
+    Only months with transactions count, and the first month of history is
+    left out when it started after the 7th, since it's likely missing a paycheck."""
+    first = month_shift(month, -INCOME_AVERAGE_MONTHS)
+    start = conn.execute(f"SELECT month, MIN(posted) FROM ({TX_SELECT})").fetchone()
+    skip = start[0] if start[0] and date.fromtimestamp(start[1]).day > 7 else None
+    rows = conn.execute(f"""SELECT month, SUM(CASE WHEN category = 'Income' THEN amount ELSE 0 END) FROM ({TX_SELECT})
+        WHERE month >= ? AND month < ? GROUP BY month""", (first, month)).fetchall()
+    rows = [r for r in rows if r[0] != skip] or rows
+    if not rows:
+        return {"average_income": None, "income_months": 0}
+    return {"average_income": round(sum(r[1] for r in rows) / len(rows), 2), "income_months": len(rows)}
 
 
 class BudgetBody(BaseModel):

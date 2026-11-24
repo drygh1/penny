@@ -75,3 +75,30 @@ def test_budget_refuses_bad_input(client):
     assert client.put("/api/budget", json={"category": "Dining", "month": "2026-13", "amount": 5}).status_code == 400
     assert client.put("/api/budget", json={"category": "Dining", "month": now, "amount": -5}).status_code == 400
     assert client.get("/api/budget", params={"month": "nope"}).status_code == 400
+
+
+def test_budget_average_income_over_a_year(client):
+    now = month_of(this_month)
+    rows = []
+    # Paid in each of the last 14 months: 2000 a month, then 3000 for the last 6.
+    for n in range(1, 15):
+        y, m = map(int, shift(now, -n).split("-"))
+        d = this_month.replace(year=y, month=m, day=1)
+        rows.append((d, "ACME CORP PAYROLL", 3000.00 if n <= 6 else 2000.00))
+    rows.append((this_month, "ACME CORP PAYROLL", 9000.00))  # this month doesn't count
+    new_account(client, "Checking", rows)
+    r = client.get("/api/budget", params={"month": now}).json()
+    assert (r["average_income"], r["income_months"]) == (2500.00, 12)
+
+
+def test_budget_average_income_skips_partial_first_month(client):
+    now = month_of(this_month)
+    y, m = map(int, shift(now, -3).split("-"))
+    first = this_month.replace(year=y, month=m, day=20)  # history starts late in the month
+    rows = [(first, "ACME CORP PAYROLL", 500.00)]
+    for n in (1, 2):
+        y, m = map(int, shift(now, -n).split("-"))
+        rows.append((this_month.replace(year=y, month=m, day=1), "ACME CORP PAYROLL", 2000.00))
+    new_account(client, "Checking", rows)
+    r = client.get("/api/budget", params={"month": now}).json()
+    assert (r["average_income"], r["income_months"]) == (2000.00, 2)
